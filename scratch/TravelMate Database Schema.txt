@@ -1,0 +1,489 @@
+-- ============================================================
+-- TravelMate Database Schema
+-- Derived from PRD v2.0 + TRD v2.0, with corrections noted inline as comments
+-- prefixed "-- FIX:" or "-- ADDED:"
+-- ==================================
+s
+==========================
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+-- ============================================================
+-- USERS &amp; AUTH
+-- ============================================================
+CREATE TABLE users (
+    user_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    phone VARCHAR(20) UNIQUE NOT NULL,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    age INTEGER CHECK (age &gt;= 18 AND age &lt;= 100),
+    gender VARCHAR(10) CHECK (gender IN ('M', 'F', 'Other')),
+    gender_preference VARCHAR(20) CHECK (gender_preference IN ('women-only', 'mixed', 'men-only')),
+    verification_status VARCHAR(20) DEFAULT 'pending' CHECK (verification_status IN ('pending', 'verified', 'rejected', 'expired')),
+    kyc_provider_reference VARCHAR(255),       -- never store Aadhaar/raw KYC docs
+    trust_score DECIMAL(5,4) DEFAULT 0.5 CHECK (trust_score &gt;= 0 AND trust_score &lt;= 1),
+    travel_styles TEXT[],
+    languages TEXT[],
+    device_info JSONB,
+    is_guide BOOLEAN DEFAULT FALSE,
+    last_active_at TIMESTAMPTZ,
+    deleted_at TIMESTAMPTZ,                     -- ADDED: soft delete for DPDP/GDPR deletion requests
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    version INTEGER DEFAULT 1
+    -- FIX: removed duplicate `emergency_contact JSONB` column.
+    -- Emergency contacts now live ONLY in emergency_contacts table below
+    -- to avoid two sources of truth for the SOS flow.
+);
+CREATE INDEX idx_users_phone ON users(phone);
+CREATE INDEX idx_users_email ON users(email);
+CREATE INDEX idx_users_verification_status ON users(verification_status);
+CREATE INDEX idx_users_trust_score ON users(trust_score);
+-- FIX: removed idx_users_destination — `destination` does not exist on users,
+-- it belongs on `trips`. Original TRD index would fail to execute.
+CREATE INDEX idx_users_deleted_at ON users(deleted_at);
+-- ============================================================
+-- SESSIONS / REFRESH TOKENS  -- ADDED
+-- ============================================================
+-- Needed for JWT refresh rotation + "logout everywhere" / revocation,
+-- which the security checklist implies but the original DDL had no
+-- persisted state to support.
+CREATE TABLE sessions (
+    session_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    refresh_token_hash VARCHAR(255) NOT NULL,
+    device_info JSONB,
+    ip_address INET,
+    revoked_at TIMESTAMPTZ,
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_sessions_user ON sessions(user_id);
+CREATE INDEX idx_sessions_token_hash ON sessions(refresh_token_hash);
+-- ============================================================
+-- USER PROFILES
+-- ============================================================
+CREATE TABLE user_profiles (
+    profile_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    bio TEXT,
+    profile_picture_url TEXT,
+    interests TEXT[],
+    travel_experience VARCHAR(20) CHECK (travel_experience IN ('beginner', 'intermediate', 'expert')),
+    preferred_accommodation VARCHAR(20) CHECK (preferred_accommodation IN ('hostel', 'hotel', 'resort', 'camping')),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_user_profiles_user ON user_profiles(user_id);
+-- ADDED: GIN index for interest-overlap (Jaccard) queries used by the matching pipeline.
+CREATE INDEX idx_user_profiles_interests ON user_profiles USING GIN (interests);
+-- ============================================================
+-- EMERGENCY CONTACTS
+-- ============================================================
+CREATE TABLE emergency_contacts (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    name VARCHAR(100) NOT NULL,
+    relationship VARCHAR(50),
+    phone VARCHAR(20) NOT NULL,
+    is_primary BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_emergency_contacts_user ON emergency_contacts(user_id);
+-- ============================================================
+-- TRIPS / MATCH REQUESTS
+-- ============================================================
+CREATE TABLE trips (
+    trip_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    destination VARCHAR(100) NOT NULL,
+    start_date DATE NOT NULL,
+    end_date DATE NOT NULL,
+    budget_tier VARCHAR(10) CHECK (budget_tier IN ('low', 'mid', 'high')),
+    interests TEXT[],
+    preferred_group_size_min INTEGER DEFAULT 4,
+    preferred_group_size_max INTEGER DEFAULT 8,
+    status VARCHAR(20) DEFAULT 'open' CHECK (status IN ('open', 'matched', 'closed', 'expired')),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    version INTEGER DEFAULT 1,
+    CHECK (end_date &gt;= start_date),              -- ADDED: basic sanity constraint missing from original
+    CHECK (preferred_group_size_max &gt;= preferred_group_size_min)
+);
+CREATE INDEX idx_trips_user ON trips(user_id);
+CREATE INDEX idx_trips_destination ON trips(destination);
+CREATE INDEX idx_trips_date_range ON trips(start_date, end_date);
+CREATE INDEX idx_trips_status ON trips(status);
+-- ============================================================
+-- DESTINATIONS / ITINERARY TEMPLATES  -- ADDED
+-- ============================================================
+-- PRD roadmap explicitly commits to "5-10 destinations" with static
+-- itinerary templates. No table existed to store this content.
+CREATE TABLE destinations (
+    destination_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name VARCHAR(100) UNIQUE NOT NULL,
+    description TEXT,
+    cover_image_url TEXT,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE TABLE destination_template_items (
+    item_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    destination_id UUID NOT NULL REFERENCES destinations(destination_id) ON DELETE CASCADE,
+    day_number INTEGER NOT NULL CHECK (day_number &gt;= 1),
+    title VARCHAR(200) NOT NULL,
+    description TEXT,
+    sort_order INTEGER DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_destination_template_items_dest ON destination_template_items(destination_id);
+-- ============================================================
+-- GROUPS
+-- ============================================================
+CREATE TABLE groups (
+    group_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    destination_id UUID REFERENCES destinations(destination_id),  -- ADDED: link to template catalog
+    destination VARCHAR(100) NOT NULL,
+    start_date DATE NOT NULL,
+    end_date DATE NOT NULL,
+    size INTEGER NOT NULL,
+    guide_id UUID REFERENCES users(user_id),
+    status VARCHAR(20) DEFAULT 'forming' CHECK (status IN ('forming', 'confirmed', 'locked', 'travelling', 'completed', 'archived')),
+    matched_at TIMESTAMPTZ,
+    locked_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    archived_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    version INTEGER DEFAULT 1
+);
+CREATE INDEX idx_groups_status ON groups(status);
+CREATE INDEX idx_groups_destination ON groups(destination);
+CREATE INDEX idx_groups_date_range ON groups(start_date, end_date);
+-- NOTE: Pure DDL cannot enforce "guide_id must reference a user who is
+-- actually a verified guide." Enforce via a BEFORE INSERT/UPDATE trigger
+-- or application-layer check against guide_profiles — flagged as a gap
+-- in the original schema, not fully solvable with CHECK constraints alone.
+-- ============================================================
+-- GROUP MEMBERS (junction table)
+-- ============================================================
+CREATE TABLE group_members (
+    group_id UUID NOT NULL REFERENCES groups(group_id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    compatibility_score DECIMAL(5,4) NOT NULL,
+    role VARCHAR(20) DEFAULT 'member' CHECK (role IN ('member', 'trip_buddy', 'leader')),
+    joined_at TIMESTAMPTZ DEFAULT NOW(),
+    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'rejected')),
+    contributed BOOLEAN DEFAULT FALSE,
+    version INTEGER DEFAULT 1,                  -- FIX: added; this table is hit concurrently during matching runs
+    PRIMARY KEY (group_id, user_id)
+);
+CREATE INDEX idx_group_members_user ON group_members(user_id);
+CREATE INDEX idx_group_members_role ON group_members(role);
+-- ============================================================
+-- USER COMPATIBILITY (cached pairwise scores)
+-- ============================================================
+CREATE TABLE user_compatibility (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_a_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    user_b_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    compatibility_score DECIMAL(5,4) NOT NULL,
+    feature_breakdown JSONB,
+    computed_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (user_a_id, user_b_id),
+    CHECK (user_a_id &lt; user_b_id)
+);
+CREATE INDEX idx_user_compatibility_score ON user_compatibility(compatibility_score);
+CREATE INDEX idx_user_compatibility_computed ON user_compatibility(computed_at);
+-- ============================================================
+-- MATCHES
+-- ============================================================
+CREATE TABLE matches (
+    match_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    group_id UUID NOT NULL REFERENCES groups(group_id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    compatibility_score DECIMAL(5,4) NOT NULL,
+    matched_at TIMESTAMPTZ DEFAULT NOW(),
+    notification_sent BOOLEAN DEFAULT FALSE
+);
+CREATE INDEX idx_matches_group ON matches(group_id);
+CREATE INDEX idx_matches_user ON matches(user_id);
+-- ============================================================
+-- ITINERARIES  -- ADDED
+-- ============================================================
+-- TRD section 5 documents a PATCH /groups/{group_id}/itinerary endpoint
+-- with optimistic locking. No backing table existed for it at all.
+CREATE TABLE itineraries (
+    itinerary_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    group_id UUID NOT NULL UNIQUE REFERENCES groups(group_id) ON DELETE CASCADE,
+    destination_id UUID REFERENCES destinations(destination_id),  -- seeded from template, then customized
+    last_edited_by UUID REFERENCES users(user_id) ON DELETE SET NULL,
+    version INTEGER DEFAULT 1,                  -- optimistic locking, as promised in TRD API spec
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE TABLE itinerary_items (
+    item_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    itinerary_id UUID NOT NULL REFERENCES itineraries(itinerary_id) ON DELETE CASCADE,
+    day_number INTEGER NOT NULL CHECK (day_number &gt;= 1),
+    title VARCHAR(200) NOT NULL,
+    description TEXT,
+    location VARCHAR(200),
+    start_time TIME,
+    sort_order INTEGER DEFAULT 0,
+    added_by UUID REFERENCES users(user_id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_itinerary_items_itinerary ON itinerary_items(itinerary_id);
+-- ============================================================
+-- POLLS  -- ADDED
+-- ============================================================
+-- Trip Service's ownership table claims "itineraries / expenses / polls."
+-- Polls were referenced nowhere in the original DDL.
+CREATE TABLE polls (
+    poll_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    group_id UUID NOT NULL REFERENCES groups(group_id) ON DELETE CASCADE,
+    created_by UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    question VARCHAR(255) NOT NULL,
+    closes_at TIMESTAMPTZ,
+    status VARCHAR(20) DEFAULT 'open' CHECK (status IN ('open', 'closed')),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_polls_group ON polls(group_id);
+CREATE TABLE poll_options (
+    option_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    poll_id UUID NOT NULL REFERENCES polls(poll_id) ON DELETE CASCADE,
+    option_text VARCHAR(255) NOT NULL,
+    sort_order INTEGER DEFAULT 0
+);
+CREATE INDEX idx_poll_options_poll ON poll_options(poll_id);
+CREATE TABLE poll_votes (
+    poll_id UUID NOT NULL REFERENCES polls(poll_id) ON DELETE CASCADE,
+    option_id UUID NOT NULL REFERENCES poll_options(option_id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    voted_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (poll_id, user_id)              -- one vote per user per poll
+);
+-- ============================================================
+-- RATINGS (blind, post-trip)
+-- ============================================================
+CREATE TABLE ratings (
+    rating_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    group_id UUID NOT NULL REFERENCES groups(group_id) ON DELETE CASCADE,
+    rater_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    ratee_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    score INTEGER NOT NULL CHECK (score &gt;= 1 AND score &lt;= 5),
+    comment TEXT,
+    is_blind BOOLEAN DEFAULT TRUE,
+    revealed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (group_id, rater_id, ratee_id),
+    CHECK (rater_id != ratee_id)                -- ADDED: can't rate yourself
+);
+CREATE INDEX idx_ratings_group ON ratings(group_id);
+CREATE INDEX idx_ratings_rater ON ratings(rater_id);
+CREATE INDEX idx_ratings_ratee ON ratings(ratee_id);
+-- NOTE: enforcing "rater/ratee were both members of group_id" requires a
+-- trigger (cross-table check) or application-layer validation before insert;
+-- not expressible as a plain CHECK constraint in Postgres.
+-- ============================================================
+-- REPORTS / FLAGS
+-- ============================================================
+CREATE TABLE reports (
+    report_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    reporter_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    reported_user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    group_id UUID REFERENCES groups(group_id) ON DELETE SET NULL,
+    reason VARCHAR(20) NOT NULL CHECK (reason IN ('harassment', 'fraud', 'inappropriate', 'other')),
+    description TEXT,
+    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'reviewed', 'dismissed', 'actioned')),
+    risk_score DECIMAL(5,4),
+    reviewed_by UUID REFERENCES users(user_id) ON DELETE SET NULL,
+    reviewed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_reports_reported ON reports(reported_user_id);
+CREATE INDEX idx_reports_status ON reports(status);
+-- ============================================================
+-- SOS ALERTS  -- ADDED
+-- ============================================================
+-- PRD names SOS as a core safety differentiator. No table existed for it.
+CREATE TABLE sos_alerts (
+    alert_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    group_id UUID REFERENCES groups(group_id) ON DELETE SET NULL,
+    latitude DECIMAL(9,6),
+    longitude DECIMAL(9,6),
+    status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'acknowledged', 'resolved', 'false_alarm')),
+    acknowledged_by UUID REFERENCES users(user_id) ON DELETE SET NULL,
+    acknowledged_at TIMESTAMPTZ,
+    resolved_at TIMESTAMPTZ,
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_sos_alerts_user ON sos_alerts(user_id);
+CREATE INDEX idx_sos_alerts_status ON sos_alerts(status);
+-- ============================================================
+-- LIVE LOCATION SHARING  -- ADDED
+-- ============================================================
+-- Consent-gated; references consent_records below for the privacy flow
+-- the PRD requires ("consent flow" deliverable).
+CREATE TABLE location_shares (
+    share_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    group_id UUID REFERENCES groups(group_id) ON DELETE SET NULL,
+    latitude DECIMAL(9,6) NOT NULL,
+    longitude DECIMAL(9,6) NOT NULL,
+    accuracy_meters DECIMAL(8,2),
+    shared_at TIMESTAMPTZ DEFAULT NOW(),
+    expires_at TIMESTAMPTZ                       -- short-lived rows; purge job deletes expired pings
+);
+CREATE INDEX idx_location_shares_user ON location_shares(user_id);
+CREATE INDEX idx_location_shares_group ON location_shares(group_id);
+CREATE INDEX idx_location_shares_expires ON location_shares(expires_at);
+-- ============================================================
+-- GUIDE PROFILES
+-- ============================================================
+CREATE TABLE guide_profiles (
+    guide_id UUID PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
+    specialties TEXT[],
+    experience_years INTEGER DEFAULT 0,
+    languages TEXT[],
+    availability JSONB,
+    rating_avg DECIMAL(3,2) DEFAULT 0,
+    total_ratings INTEGER DEFAULT 0,
+    hourly_rate DECIMAL(10,2),
+    verification_status VARCHAR(20) DEFAULT 'pending' CHECK (verification_status IN ('pending', 'verified', 'rejected')),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_guide_profiles_rating ON guide_profiles(rating_avg);
+-- ============================================================
+-- GUIDE REQUESTS  -- ADDED
+-- ============================================================
+-- PRD MVP scope explicitly lists "Guide/tour card with request action."
+-- `bookings` only models the post-acceptance, paid state — there was no
+-- table for the pending request/response step before payment.
+CREATE TABLE guide_requests (
+    request_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    group_id UUID NOT NULL REFERENCES groups(group_id) ON DELETE CASCADE,
+    guide_id UUID NOT NULL REFERENCES guide_profiles(guide_id) ON DELETE CASCADE,
+    requested_by UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    message TEXT,
+    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'declined', 'expired', 'withdrawn')),
+    responded_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_guide_requests_group ON guide_requests(group_id);
+CREATE INDEX idx_guide_requests_guide ON guide_requests(guide_id);
+CREATE INDEX idx_guide_requests_status ON guide_requests(status);
+-- ============================================================
+-- BOOKINGS
+-- ============================================================
+CREATE TABLE bookings (
+    booking_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    group_id UUID NOT NULL REFERENCES groups(group_id) ON DELETE CASCADE,
+    guide_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    guide_request_id UUID REFERENCES guide_requests(request_id) ON DELETE SET NULL,  -- ADDED: traceability to the originating request
+    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'authorized', 'confirmed', 'completed', 'refunded', 'cancelled')),
+    amount DECIMAL(10,2) NOT NULL,
+    commission DECIMAL(10,2) NOT NULL,
+    payment_intent_id VARCHAR(100),
+    booked_at TIMESTAMPTZ DEFAULT NOW(),
+    confirmed_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    refunded_at TIMESTAMPTZ,
+    version INTEGER DEFAULT 1
+);
+CREATE INDEX idx_bookings_group ON bookings(group_id);
+CREATE INDEX idx_bookings_guide ON bookings(guide_id);
+CREATE INDEX idx_bookings_status ON bookings(status);
+-- ============================================================
+-- EXPENSES
+-- ============================================================
+CREATE TABLE expenses (
+    expense_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    group_id UUID NOT NULL REFERENCES groups(group_id) ON DELETE CASCADE,
+    paid_by UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    amount DECIMAL(10,2) NOT NULL,
+    description VARCHAR(255) NOT NULL,
+    category VARCHAR(20) CHECK (category IN ('food', 'accommodation', 'transport', 'activity', 'other')),
+    split_type VARCHAR(10) DEFAULT 'equal' CHECK (split_type IN ('equal', 'custom')),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_expenses_group ON expenses(group_id);
+CREATE TABLE expense_splits (                   -- ADDED: 'custom' split_type had no way to store per-person shares
+    expense_id UUID NOT NULL REFERENCES expenses(expense_id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    share_amount DECIMAL(10,2) NOT NULL,
+    PRIMARY KEY (expense_id, user_id)
+);
+-- ============================================================
+-- NOTIFICATIONS
+-- ============================================================
+CREATE TABLE notifications (
+    notification_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    type VARCHAR(20) NOT NULL CHECK (type IN ('match', 'trip', 'guide', 'safety', 'system')),
+    title VARCHAR(200) NOT NULL,
+    body TEXT NOT NULL,
+    data JSONB,
+    channel VARCHAR(20) NOT NULL CHECK (channel IN ('push', 'email', 'sms')),
+    read_at TIMESTAMPTZ,
+    delivered_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_notifications_user ON notifications(user_id);
+CREATE INDEX idx_notifications_read ON notifications(read_at);
+-- ============================================================
+-- AUDIT LOG
+-- ============================================================
+CREATE TABLE audit_logs (
+    log_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID REFERENCES users(user_id) ON DELETE SET NULL,
+    action VARCHAR(50) NOT NULL,
+    entity_type VARCHAR(50) NOT NULL,
+    entity_id UUID,
+    changes JSONB,
+    ip_address INET,
+    user_agent TEXT,
+    metadata JSONB,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_audit_logs_user ON audit_logs(user_id);
+CREATE INDEX idx_audit_logs_entity ON audit_logs(entity_type, entity_id);
+-- ============================================================
+-- CONSENT RECORDS
+-- ============================================================
+CREATE TABLE consent_records (
+    consent_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    consent_type VARCHAR(20) NOT NULL CHECK (consent_type IN ('location', 'terms', 'marketing', 'data_processing')),
+    granted BOOLEAN DEFAULT TRUE,
+    granted_at TIMESTAMPTZ DEFAULT NOW(),
+    revoked_at TIMESTAMPTZ,
+    ip_address INET,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_consent_records_user ON consent_records(user_id);
+-- ============================================================
+-- FEATURE FLAGS
+-- ============================================================
+CREATE TABLE feature_flags (
+    flag_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name VARCHAR(100) UNIQUE NOT NULL,
+    enabled BOOLEAN DEFAULT FALSE,
+    description TEXT,
+    rollout_percentage INTEGER DEFAULT 100 CHECK (rollout_percentage &gt;= 0 AND rollout_percentage &lt;= 100),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+-- ============================================================
+-- PARTITIONING (trips, as noted in TRD section 4.3)
+-- ============================================================
+-- CREATE TABLE trips_partitioned (LIKE trips INCLUDING ALL) PARTITION BY RANGE (created_at);
+-- CREATE TABLE trips_2026_01 PARTITION OF trips_partitioned
+--     FOR VALUES FROM ('2026-01-01') TO ('2026-02-01');
+-- Retention: drop partitions older than 2 years.

@@ -1,0 +1,553 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model audit_logs {
+  log_id      String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id     String?   @db.Uuid
+  action      String    @db.VarChar(50)
+  entity_type String    @db.VarChar(50)
+  entity_id   String?   @db.Uuid
+  changes     Json?
+  ip_address  String?   @db.Inet
+  user_agent  String?
+  metadata    Json?
+  created_at  DateTime? @default(now()) @db.Timestamptz(6)
+  users       users?    @relation(fields: [user_id], references: [user_id], onUpdate: NoAction)
+
+  @@index([entity_type, entity_id], map: "idx_audit_logs_entity")
+  @@index([user_id], map: "idx_audit_logs_user")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model bookings {
+  booking_id        String          @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  group_id          String          @db.Uuid
+  guide_id          String          @db.Uuid
+  guide_request_id  String?         @db.Uuid
+  status            String?         @default("pending") @db.VarChar(20)
+  amount            Decimal         @db.Decimal(10, 2)
+  commission        Decimal         @db.Decimal(10, 2)
+  payment_intent_id String?         @db.VarChar(100)
+  booked_at         DateTime?       @default(now()) @db.Timestamptz(6)
+  confirmed_at      DateTime?       @db.Timestamptz(6)
+  completed_at      DateTime?       @db.Timestamptz(6)
+  refunded_at       DateTime?       @db.Timestamptz(6)
+  version           Int?            @default(1)
+  groups            groups          @relation(fields: [group_id], references: [group_id], onDelete: Cascade, onUpdate: NoAction)
+  users             users           @relation(fields: [guide_id], references: [user_id], onDelete: Cascade, onUpdate: NoAction)
+  guide_requests    guide_requests? @relation(fields: [guide_request_id], references: [request_id], onUpdate: NoAction)
+
+  @@index([group_id], map: "idx_bookings_group")
+  @@index([guide_id], map: "idx_bookings_guide")
+  @@index([status], map: "idx_bookings_status")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model consent_records {
+  consent_id   String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id      String    @db.Uuid
+  consent_type String    @db.VarChar(20)
+  granted      Boolean?  @default(true)
+  granted_at   DateTime? @default(now()) @db.Timestamptz(6)
+  revoked_at   DateTime? @db.Timestamptz(6)
+  ip_address   String?   @db.Inet
+  created_at   DateTime? @default(now()) @db.Timestamptz(6)
+  users        users     @relation(fields: [user_id], references: [user_id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([user_id], map: "idx_consent_records_user")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model destination_template_items {
+  item_id        String       @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  destination_id String       @db.Uuid
+  day_number     Int
+  title          String       @db.VarChar(200)
+  description    String?
+  sort_order     Int?         @default(0)
+  created_at     DateTime?    @default(now()) @db.Timestamptz(6)
+  destinations   destinations @relation(fields: [destination_id], references: [destination_id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([destination_id], map: "idx_destination_template_items_dest")
+}
+
+model destinations {
+  destination_id             String                       @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  name                       String                       @unique @db.VarChar(100)
+  description                String?
+  cover_image_url            String?
+  is_active                  Boolean?                     @default(true)
+  created_at                 DateTime?                    @default(now()) @db.Timestamptz(6)
+  updated_at                 DateTime?                    @default(now()) @db.Timestamptz(6)
+  destination_template_items destination_template_items[]
+  groups                     groups[]
+  itineraries                itineraries[]
+}
+
+model emergency_contacts {
+  id           String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id      String    @db.Uuid
+  name         String    @db.VarChar(100)
+  relationship String?   @db.VarChar(50)
+  phone        String    @db.VarChar(20)
+  is_primary   Boolean?  @default(false)
+  created_at   DateTime? @default(now()) @db.Timestamptz(6)
+  users        users     @relation(fields: [user_id], references: [user_id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([user_id], map: "idx_emergency_contacts_user")
+}
+
+model expense_splits {
+  expense_id   String   @db.Uuid
+  user_id      String   @db.Uuid
+  share_amount Decimal  @db.Decimal(10, 2)
+  expenses     expenses @relation(fields: [expense_id], references: [expense_id], onDelete: Cascade, onUpdate: NoAction)
+  users        users    @relation(fields: [user_id], references: [user_id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([expense_id, user_id])
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model expenses {
+  expense_id     String           @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  group_id       String           @db.Uuid
+  paid_by        String           @db.Uuid
+  amount         Decimal          @db.Decimal(10, 2)
+  description    String           @db.VarChar(255)
+  category       String?          @db.VarChar(20)
+  split_type     String?          @default("equal") @db.VarChar(10)
+  created_at     DateTime?        @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime?        @default(now()) @db.Timestamptz(6)
+  expense_splits expense_splits[]
+  groups         groups           @relation(fields: [group_id], references: [group_id], onDelete: Cascade, onUpdate: NoAction)
+  users          users            @relation(fields: [paid_by], references: [user_id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([group_id], map: "idx_expenses_group")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model feature_flags {
+  flag_id            String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  name               String    @unique @db.VarChar(100)
+  enabled            Boolean?  @default(false)
+  description        String?
+  rollout_percentage Int?      @default(100)
+  created_at         DateTime? @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime? @default(now()) @db.Timestamptz(6)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model group_members {
+  group_id            String    @db.Uuid
+  user_id             String    @db.Uuid
+  compatibility_score Decimal   @db.Decimal(5, 4)
+  role                String?   @default("member") @db.VarChar(20)
+  joined_at           DateTime? @default(now()) @db.Timestamptz(6)
+  status              String?   @default("pending") @db.VarChar(20)
+  contributed         Boolean?  @default(false)
+  version             Int?      @default(1)
+  groups              groups    @relation(fields: [group_id], references: [group_id], onDelete: Cascade, onUpdate: NoAction)
+  users               users     @relation(fields: [user_id], references: [user_id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([group_id, user_id])
+  @@index([role], map: "idx_group_members_role")
+  @@index([user_id], map: "idx_group_members_user")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model groups {
+  group_id        String            @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  destination_id  String?           @db.Uuid
+  destination     String            @db.VarChar(100)
+  start_date      DateTime          @db.Date
+  end_date        DateTime          @db.Date
+  size            Int
+  guide_id        String?           @db.Uuid
+  status          String?           @default("forming") @db.VarChar(20)
+  matched_at      DateTime?         @db.Timestamptz(6)
+  locked_at       DateTime?         @db.Timestamptz(6)
+  completed_at    DateTime?         @db.Timestamptz(6)
+  archived_at     DateTime?         @db.Timestamptz(6)
+  created_at      DateTime?         @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime?         @default(now()) @db.Timestamptz(6)
+  version         Int?              @default(1)
+  bookings        bookings[]
+  expenses        expenses[]
+  group_members   group_members[]
+  destinations    destinations?     @relation(fields: [destination_id], references: [destination_id], onDelete: NoAction, onUpdate: NoAction)
+  users           users?            @relation(fields: [guide_id], references: [user_id], onDelete: NoAction, onUpdate: NoAction)
+  guide_requests  guide_requests[]
+  itineraries     itineraries?
+  location_shares location_shares[]
+  matches         matches[]
+  polls           polls[]
+  ratings         ratings[]
+  reports         reports[]
+  sos_alerts      sos_alerts[]
+
+  @@index([start_date, end_date], map: "idx_groups_date_range")
+  @@index([destination], map: "idx_groups_destination")
+  @@index([status], map: "idx_groups_status")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model guide_profiles {
+  guide_id            String           @id @db.Uuid
+  specialties         String[]
+  experience_years    Int?             @default(0)
+  languages           String[]
+  availability        Json?
+  rating_avg          Decimal?         @default(0) @db.Decimal(3, 2)
+  total_ratings       Int?             @default(0)
+  hourly_rate         Decimal?         @db.Decimal(10, 2)
+  verification_status String?          @default("pending") @db.VarChar(20)
+  created_at          DateTime?        @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime?        @default(now()) @db.Timestamptz(6)
+  users               users            @relation(fields: [guide_id], references: [user_id], onDelete: Cascade, onUpdate: NoAction)
+  guide_requests      guide_requests[]
+
+  @@index([rating_avg], map: "idx_guide_profiles_rating")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model guide_requests {
+  request_id     String         @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  group_id       String         @db.Uuid
+  guide_id       String         @db.Uuid
+  requested_by   String         @db.Uuid
+  message        String?
+  status         String?        @default("pending") @db.VarChar(20)
+  responded_at   DateTime?      @db.Timestamptz(6)
+  created_at     DateTime?      @default(now()) @db.Timestamptz(6)
+  bookings       bookings[]
+  groups         groups         @relation(fields: [group_id], references: [group_id], onDelete: Cascade, onUpdate: NoAction)
+  guide_profiles guide_profiles @relation(fields: [guide_id], references: [guide_id], onDelete: Cascade, onUpdate: NoAction)
+  users          users          @relation(fields: [requested_by], references: [user_id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([group_id], map: "idx_guide_requests_group")
+  @@index([guide_id], map: "idx_guide_requests_guide")
+  @@index([status], map: "idx_guide_requests_status")
+}
+
+model itineraries {
+  itinerary_id    String            @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  group_id        String            @unique @db.Uuid
+  destination_id  String?           @db.Uuid
+  last_edited_by  String?           @db.Uuid
+  version         Int?              @default(1)
+  created_at      DateTime?         @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime?         @default(now()) @db.Timestamptz(6)
+  destinations    destinations?     @relation(fields: [destination_id], references: [destination_id], onDelete: NoAction, onUpdate: NoAction)
+  groups          groups            @relation(fields: [group_id], references: [group_id], onDelete: Cascade, onUpdate: NoAction)
+  users           users?            @relation(fields: [last_edited_by], references: [user_id], onUpdate: NoAction)
+  itinerary_items itinerary_items[]
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model itinerary_items {
+  item_id      String      @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  itinerary_id String      @db.Uuid
+  day_number   Int
+  title        String      @db.VarChar(200)
+  description  String?
+  location     String?     @db.VarChar(200)
+  start_time   DateTime?   @db.Time(6)
+  sort_order   Int?        @default(0)
+  added_by     String?     @db.Uuid
+  created_at   DateTime?   @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime?   @default(now()) @db.Timestamptz(6)
+  users        users?      @relation(fields: [added_by], references: [user_id], onUpdate: NoAction)
+  itineraries  itineraries @relation(fields: [itinerary_id], references: [itinerary_id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([itinerary_id], map: "idx_itinerary_items_itinerary")
+}
+
+model location_shares {
+  share_id        String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id         String    @db.Uuid
+  group_id        String?   @db.Uuid
+  latitude        Decimal   @db.Decimal(9, 6)
+  longitude       Decimal   @db.Decimal(9, 6)
+  accuracy_meters Decimal?  @db.Decimal(8, 2)
+  shared_at       DateTime? @default(now()) @db.Timestamptz(6)
+  expires_at      DateTime? @db.Timestamptz(6)
+  groups          groups?   @relation(fields: [group_id], references: [group_id], onUpdate: NoAction)
+  users           users     @relation(fields: [user_id], references: [user_id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([expires_at], map: "idx_location_shares_expires")
+  @@index([group_id], map: "idx_location_shares_group")
+  @@index([user_id], map: "idx_location_shares_user")
+}
+
+model matches {
+  match_id            String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  group_id            String    @db.Uuid
+  user_id             String    @db.Uuid
+  compatibility_score Decimal   @db.Decimal(5, 4)
+  matched_at          DateTime? @default(now()) @db.Timestamptz(6)
+  notification_sent   Boolean?  @default(false)
+  groups              groups    @relation(fields: [group_id], references: [group_id], onDelete: Cascade, onUpdate: NoAction)
+  users               users     @relation(fields: [user_id], references: [user_id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([group_id], map: "idx_matches_group")
+  @@index([user_id], map: "idx_matches_user")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model notifications {
+  notification_id String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id         String    @db.Uuid
+  type            String    @db.VarChar(20)
+  title           String    @db.VarChar(200)
+  body            String
+  data            Json?
+  channel         String    @db.VarChar(20)
+  read_at         DateTime? @db.Timestamptz(6)
+  delivered_at    DateTime? @db.Timestamptz(6)
+  created_at      DateTime? @default(now()) @db.Timestamptz(6)
+  users           users     @relation(fields: [user_id], references: [user_id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([read_at], map: "idx_notifications_read")
+  @@index([user_id], map: "idx_notifications_user")
+}
+
+model poll_options {
+  option_id   String       @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  poll_id     String       @db.Uuid
+  option_text String       @db.VarChar(255)
+  sort_order  Int?         @default(0)
+  polls       polls        @relation(fields: [poll_id], references: [poll_id], onDelete: Cascade, onUpdate: NoAction)
+  poll_votes  poll_votes[]
+
+  @@index([poll_id], map: "idx_poll_options_poll")
+}
+
+model poll_votes {
+  poll_id      String       @db.Uuid
+  option_id    String       @db.Uuid
+  user_id      String       @db.Uuid
+  voted_at     DateTime?    @default(now()) @db.Timestamptz(6)
+  poll_options poll_options @relation(fields: [option_id], references: [option_id], onDelete: Cascade, onUpdate: NoAction)
+  polls        polls        @relation(fields: [poll_id], references: [poll_id], onDelete: Cascade, onUpdate: NoAction)
+  users        users        @relation(fields: [user_id], references: [user_id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([poll_id, user_id])
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model polls {
+  poll_id      String         @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  group_id     String         @db.Uuid
+  created_by   String         @db.Uuid
+  question     String         @db.VarChar(255)
+  closes_at    DateTime?      @db.Timestamptz(6)
+  status       String?        @default("open") @db.VarChar(20)
+  created_at   DateTime?      @default(now()) @db.Timestamptz(6)
+  poll_options poll_options[]
+  poll_votes   poll_votes[]
+  users        users          @relation(fields: [created_by], references: [user_id], onDelete: Cascade, onUpdate: NoAction)
+  groups       groups         @relation(fields: [group_id], references: [group_id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([group_id], map: "idx_polls_group")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model ratings {
+  rating_id                     String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  group_id                      String    @db.Uuid
+  rater_id                      String    @db.Uuid
+  ratee_id                      String    @db.Uuid
+  score                         Int
+  comment                       String?
+  is_blind                      Boolean?  @default(true)
+  revealed_at                   DateTime? @db.Timestamptz(6)
+  created_at                    DateTime? @default(now()) @db.Timestamptz(6)
+  groups                        groups    @relation(fields: [group_id], references: [group_id], onDelete: Cascade, onUpdate: NoAction)
+  users_ratings_ratee_idTousers users     @relation("ratings_ratee_idTousers", fields: [ratee_id], references: [user_id], onDelete: Cascade, onUpdate: NoAction)
+  users_ratings_rater_idTousers users     @relation("ratings_rater_idTousers", fields: [rater_id], references: [user_id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([group_id, rater_id, ratee_id])
+  @@index([group_id], map: "idx_ratings_group")
+  @@index([ratee_id], map: "idx_ratings_ratee")
+  @@index([rater_id], map: "idx_ratings_rater")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model reports {
+  report_id                             String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  reporter_id                           String    @db.Uuid
+  reported_user_id                      String    @db.Uuid
+  group_id                              String?   @db.Uuid
+  reason                                String    @db.VarChar(20)
+  description                           String?
+  status                                String?   @default("pending") @db.VarChar(20)
+  risk_score                            Decimal?  @db.Decimal(5, 4)
+  reviewed_by                           String?   @db.Uuid
+  reviewed_at                           DateTime? @db.Timestamptz(6)
+  created_at                            DateTime? @default(now()) @db.Timestamptz(6)
+  updated_at                            DateTime? @default(now()) @db.Timestamptz(6)
+  groups                                groups?   @relation(fields: [group_id], references: [group_id], onUpdate: NoAction)
+  users_reports_reported_user_idTousers users     @relation("reports_reported_user_idTousers", fields: [reported_user_id], references: [user_id], onDelete: Cascade, onUpdate: NoAction)
+  users_reports_reporter_idTousers      users     @relation("reports_reporter_idTousers", fields: [reporter_id], references: [user_id], onDelete: Cascade, onUpdate: NoAction)
+  users_reports_reviewed_byTousers      users?    @relation("reports_reviewed_byTousers", fields: [reviewed_by], references: [user_id], onUpdate: NoAction)
+
+  @@index([reported_user_id], map: "idx_reports_reported")
+  @@index([status], map: "idx_reports_status")
+}
+
+model sessions {
+  session_id         String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id            String    @db.Uuid
+  refresh_token_hash String    @db.VarChar(255)
+  device_info        Json?
+  ip_address         String?   @db.Inet
+  revoked_at         DateTime? @db.Timestamptz(6)
+  expires_at         DateTime  @db.Timestamptz(6)
+  created_at         DateTime? @default(now()) @db.Timestamptz(6)
+  users              users     @relation(fields: [user_id], references: [user_id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([refresh_token_hash], map: "idx_sessions_token_hash")
+  @@index([user_id], map: "idx_sessions_user")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model sos_alerts {
+  alert_id                                String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id                                 String    @db.Uuid
+  group_id                                String?   @db.Uuid
+  latitude                                Decimal?  @db.Decimal(9, 6)
+  longitude                               Decimal?  @db.Decimal(9, 6)
+  status                                  String?   @default("active") @db.VarChar(20)
+  acknowledged_by                         String?   @db.Uuid
+  acknowledged_at                         DateTime? @db.Timestamptz(6)
+  resolved_at                             DateTime? @db.Timestamptz(6)
+  notes                                   String?
+  created_at                              DateTime? @default(now()) @db.Timestamptz(6)
+  users_sos_alerts_acknowledged_byTousers users?    @relation("sos_alerts_acknowledged_byTousers", fields: [acknowledged_by], references: [user_id], onUpdate: NoAction)
+  groups                                  groups?   @relation(fields: [group_id], references: [group_id], onUpdate: NoAction)
+  users_sos_alerts_user_idTousers         users     @relation("sos_alerts_user_idTousers", fields: [user_id], references: [user_id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([status], map: "idx_sos_alerts_status")
+  @@index([user_id], map: "idx_sos_alerts_user")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model trips {
+  trip_id                  String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id                  String    @db.Uuid
+  destination              String    @db.VarChar(100)
+  start_date               DateTime  @db.Date
+  end_date                 DateTime  @db.Date
+  budget_tier              String?   @db.VarChar(10)
+  interests                String[]
+  preferred_group_size_min Int?      @default(4)
+  preferred_group_size_max Int?      @default(8)
+  status                   String?   @default("open") @db.VarChar(20)
+  created_at               DateTime? @default(now()) @db.Timestamptz(6)
+  updated_at               DateTime? @default(now()) @db.Timestamptz(6)
+  version                  Int?      @default(1)
+  users                    users     @relation(fields: [user_id], references: [user_id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([start_date, end_date], map: "idx_trips_date_range")
+  @@index([destination], map: "idx_trips_destination")
+  @@index([status], map: "idx_trips_status")
+  @@index([user_id], map: "idx_trips_user")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model user_compatibility {
+  id                                        String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_a_id                                 String    @db.Uuid
+  user_b_id                                 String    @db.Uuid
+  compatibility_score                       Decimal   @db.Decimal(5, 4)
+  feature_breakdown                         Json?
+  computed_at                               DateTime? @default(now()) @db.Timestamptz(6)
+  users_user_compatibility_user_a_idTousers users     @relation("user_compatibility_user_a_idTousers", fields: [user_a_id], references: [user_id], onDelete: Cascade, onUpdate: NoAction)
+  users_user_compatibility_user_b_idTousers users     @relation("user_compatibility_user_b_idTousers", fields: [user_b_id], references: [user_id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([user_a_id, user_b_id])
+  @@index([computed_at], map: "idx_user_compatibility_computed")
+  @@index([compatibility_score], map: "idx_user_compatibility_score")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model user_profiles {
+  profile_id              String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id                 String    @db.Uuid
+  bio                     String?
+  profile_picture_url     String?
+  interests               String[]
+  travel_experience       String?   @db.VarChar(20)
+  preferred_accommodation String?   @db.VarChar(20)
+  created_at              DateTime? @default(now()) @db.Timestamptz(6)
+  updated_at              DateTime? @default(now()) @db.Timestamptz(6)
+  users                   users     @relation(fields: [user_id], references: [user_id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([interests], map: "idx_user_profiles_interests", type: Gin)
+  @@index([user_id], map: "idx_user_profiles_user")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model users {
+  user_id                                                String               @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  phone                                                  String               @unique @db.VarChar(20)
+  email                                                  String               @unique @db.VarChar(255)
+  password_hash                                          String               @db.VarChar(255)
+  name                                                   String               @db.VarChar(100)
+  age                                                    Int?
+  gender                                                 String?              @db.VarChar(10)
+  gender_preference                                      String?              @db.VarChar(20)
+  verification_status                                    String?              @default("pending") @db.VarChar(20)
+  kyc_provider_reference                                 String?              @db.VarChar(255)
+  trust_score                                            Decimal?             @default(0.5) @db.Decimal(5, 4)
+  travel_styles                                          String[]
+  languages                                              String[]
+  device_info                                            Json?
+  is_guide                                               Boolean?             @default(false)
+  last_active_at                                         DateTime?            @db.Timestamptz(6)
+  deleted_at                                             DateTime?            @db.Timestamptz(6)
+  created_at                                             DateTime?            @default(now()) @db.Timestamptz(6)
+  updated_at                                             DateTime?            @default(now()) @db.Timestamptz(6)
+  version                                                Int?                 @default(1)
+  audit_logs                                             audit_logs[]
+  bookings                                               bookings[]
+  consent_records                                        consent_records[]
+  emergency_contacts                                     emergency_contacts[]
+  expense_splits                                         expense_splits[]
+  expenses                                               expenses[]
+  group_members                                          group_members[]
+  groups                                                 groups[]
+  guide_profiles                                         guide_profiles?
+  guide_requests                                         guide_requests[]
+  itineraries                                            itineraries[]
+  itinerary_items                                        itinerary_items[]
+  location_shares                                        location_shares[]
+  matches                                                matches[]
+  notifications                                          notifications[]
+  poll_votes                                             poll_votes[]
+  polls                                                  polls[]
+  ratings_ratings_ratee_idTousers                        ratings[]            @relation("ratings_ratee_idTousers")
+  ratings_ratings_rater_idTousers                        ratings[]            @relation("ratings_rater_idTousers")
+  reports_reports_reported_user_idTousers                reports[]            @relation("reports_reported_user_idTousers")
+  reports_reports_reporter_idTousers                     reports[]            @relation("reports_reporter_idTousers")
+  reports_reports_reviewed_byTousers                     reports[]            @relation("reports_reviewed_byTousers")
+  sessions                                               sessions[]
+  sos_alerts_sos_alerts_acknowledged_byTousers           sos_alerts[]         @relation("sos_alerts_acknowledged_byTousers")
+  sos_alerts_sos_alerts_user_idTousers                   sos_alerts[]         @relation("sos_alerts_user_idTousers")
+  trips                                                  trips[]
+  user_compatibility_user_compatibility_user_a_idTousers user_compatibility[] @relation("user_compatibility_user_a_idTousers")
+  user_compatibility_user_compatibility_user_b_idTousers user_compatibility[] @relation("user_compatibility_user_b_idTousers")
+  user_profiles                                          user_profiles[]
+
+  @@index([deleted_at], map: "idx_users_deleted_at")
+  @@index([email], map: "idx_users_email")
+  @@index([phone], map: "idx_users_phone")
+  @@index([trust_score], map: "idx_users_trust_score")
+  @@index([verification_status], map: "idx_users_verification_status")
+}

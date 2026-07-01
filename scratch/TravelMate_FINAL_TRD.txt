@@ -1,0 +1,2240 @@
+# TravelMate — Technical Requirements Document (TRD)
+## Enhanced &amp; Synced with PRD v2.0
+| **Document Version** | v2.0 |
+|----------------------|------|
+| **Date** | June 29, 2026 |
+| **Status** | Production-Ready Design |
+| **Target Market** | India (with roadmap for expansion) |
+| **Document Owner** | Engineering Team |
+| **PRD Reference** | TravelMate PRD v2.0 (Enhanced) |
+---
+## 1. Executive Summary
+This Technical Requirements Document (TRD) translates the TravelMate Product Requirements Document (PRD v2.0) into a comprehensive technical specification for implementation. The system is a trust-first group travel matching platform with safety as an architectural constraint.
+**Core Technical Decisions:**
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| **Architecture** | Microservices + Event-Driven | Decoupling, independent scaling, auditability |
+| **Primary Database** | PostgreSQL 16 | ACID compliance, JSONB support, partitioning capabilities |
+| **Cache** | Redis 7 | Session management, matching result caching, distributed locking |
+| **Event Bus** | Kafka 3.x | High-throughput, durable logs, exactly-once semantics |
+| **API Layer** | Node.js 22 LTS | High I/O performance, built-in WebSocket support |
+| **Internal RPC** | gRPC | High performance, streaming support, smaller payloads |
+| **Orchestration** | Kubernetes 1.31 + EKS | Industry standard, auto-scaling, multi-region support |
+| **Observability** | OpenTelemetry + Prometheus + Grafana + Jaeger | Standard CNCF stack, production monitoring |
+---
+## 2. Architecture Overview
+### 2.1 High-Level Architecture Diagram
+```mermaid
+graph TB
+    subgraph "Client Layer"
+        MobileApp[React Native / Flutter Mobile App]
+        WebApp[Web Application]
+    end
+    subgraph "Edge Layer"
+        APIGateway[API Gateway&lt;br/&gt;Auth / Rate Limiting / Tracing]
+        LB[Load Balancer]
+    end
+    subgraph "Service Layer"
+        AuthSvc[Auth Service&lt;br/&gt;JWT / OTP / Sessions]
+        UserSvc[User Service&lt;br/&gt;Profiles / KYC / Trust Score]
+        MatchSvc[Matching Service&lt;br/&gt;Pipeline / Optimizer / Locking]
+        GroupSvc[Group Service&lt;br/&gt;Lifecycle / Memberships]
+        TripSvc[Trip Service&lt;br/&gt;Itineraries / Expenses / Polls]
+        GuideSvc[Guide Service&lt;br/&gt;Bookings / Payments]
+        NotifSvc[Notification Service&lt;br/&gt;Push / Email / SMS]
+        SafetySvc[Safety Engine&lt;br/&gt;Risk / Moderation / Flagging]
+        AnalyticSvc[Analytics Service&lt;br/&gt;Metrics / Reports]
+    end
+    subgraph "Event Layer"
+        EventBus[Event Bus&lt;br/&gt;Kafka / Redis Streams]
+    end
+    subgraph "Data Layer"
+        Postgres[(PostgreSQL 16&lt;br/&gt;Primary + Read Replicas)]
+        Redis[(Redis 7&lt;br/&gt;Cache / Sessions / Locks)]
+        ObjectStore[(Object Storage&lt;br/&gt;Photos / Documents)]
+    end
+    MobileApp --&gt; LB
+    WebApp --&gt; LB
+    LB --&gt; APIGateway
+    APIGateway --&gt; AuthSvc
+    APIGateway --&gt; UserSvc
+    APIGateway --&gt; MatchSvc
+    APIGateway --&gt; GroupSvc
+    APIGateway --&gt; TripSvc
+    APIGateway --&gt; GuideSvc
+    
+    AuthSvc --&gt; Postgres
+    AuthSvc --&gt; Redis
+    UserSvc --&gt; Postgres
+    UserSvc --&gt; Redis
+    MatchSvc --&gt; Postgres
+    MatchSvc --&gt; Redis
+    GroupSvc --&gt; Postgres
+    TripSvc --&gt; Postgres
+    GuideSvc --&gt; Postgres
+    GuideSvc --&gt; ObjectStore
+    
+    AuthSvc --&gt;|UserRegistered| EventBus
+    UserSvc --&gt;|KYCVerified| EventBus
+    MatchSvc --&gt;|GroupFormed| EventBus
+    GroupSvc --&gt;|GroupStatusChanged| EventBus
+    TripSvc --&gt;|ItineraryUpdated| EventBus
+    SafetySvc --&gt;|RiskAlert| EventBus
+    
+    EventBus --&gt; NotifSvc
+    EventBus --&gt; AnalyticSvc
+    EventBus --&gt; SafetySvc
+```
+### 2.2 Service Ownership &amp; Responsibilities
+| Service | Owned Tables | Produced Events | Consumed Events |
+|---------|-------------|-----------------|-----------------|
+| **Auth Service** | users, emergency_contacts, consent_records | UserRegistered, UserLoggedIn, UserVerified | - |
+| **User Service** | user_profiles, verification_records | KYCVerified, TrustScoreUpdated | UserRegistered |
+| **Matching Service** | trips, matches, user_compatibility | GroupFormed, MatchFound, MatchFailed | KYCVerified, TrustScoreUpdated |
+| **Group Service** | groups, group_members, ratings | GroupStatusChanged, GroupCompleted | GroupFormed |
+| **Trip Service** | itineraries, expenses, polls | ItineraryUpdated, ExpenseAdded | GroupStatusChanged |
+| **Guide Service** | guide_profiles, bookings | BookingConfirmed, BookingCompleted | GroupFormed |
+| **Notification Service** | notifications | NotificationSent | All user/group events |
+| **Safety Engine** | reports, risk_scores | RiskAlert, UserFlagged | Ratings, Reports |
+| **Analytics Service** | analytics_events | - | All events |
+---
+## 3. Matching Algorithm — Detailed Specification
+### 3.1 Multi-Stage Pipeline
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         MATCHING PIPELINE                                  │
+├
+─────────────────────────────────────────────────────────────────────────────
+┤
+│                                                                             │
+│  [1] DESTINATION FILTER                                                     │
+│      └── Exact match required                                              │
+│      └── SQL: WHERE destination = $1                                       │
+│                                                                             │
+│  [2] DATE WINDOW FILTER                                                     │
+│      └── Minimum 2-day overlap required                                    │
+│      └── SQL: WHERE start_date &lt;= $2 AND end_date &gt;= $1                    │
+│                                                                             │
+│  [3] BUDGET FILTER                                                         │
+│      └── Tier match required (low/mid/high)                                │
+│      └── SQL: WHERE budget_tier = $3                                       │
+│                                                                             │
+│  [4] GENDER PREFERENCE FILTER                                              │
+│      └── Hard rejection on incompatibility                                 │
+│      └── Logic:                                                             │
+│          IF user_a.gender_preference = 'women-only' AND                     │
+│             user_b.gender != 'F' THEN reject                               │
+│          IF user_a.gender_preference = 'men-only' AND                       │
+│             user_b.gender != 'M' THEN reject                               │
+│                                                                             │
+│  [5] AGE BUCKET PREFERENCE                                                 │
+│      └── Soft preference; can be relaxed                                   │
+│      └── Buckets: 18-24, 25-34, 35-44, 45+                                 │
+│                                                                             │
+│  [6] INTEREST EMBEDDING                                                    │
+│      └── Convert tags to embedding vectors using pre-trained model         │
+│      └── Tags: trek, party, photography, food, adventure, culture          │
+│                                                                             │
+│  [7] CANDIDATE POOL GENERATION                                             │
+│      └── All users passing hard filters (steps 1-4)                        │
+│      └── Max pool size: 500 users for performance                          │
+│                                                                             │
+│  [8] COMPATIBILITY GRAPH CONSTRUCTION                                      │
+│      └── Weighted edges between candidates                                 │
+│      └── Edge weight = compatibility_score(A, B)                           │
+│      └── Store in UserCompatibility table for caching                      │
+│                                                                             │
+│  [9] CONSTRAINED GROUP OPTIMIZER                                           │
+│      └── Greedy packing with local swap optimization                       │
+│      └── Algorithm: see Section 3.3                                        │
+│                                                                             │
+│  [10] GROUP FORMATION                                                      │
+│      └── Groups of 4-8 users with max compatibility                        │
+│      └── Create Group and GroupMember records                              │
+│      └── Emit GroupFormed event                                            │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+### 3.2 Compatibility Score Formula (Implementation)
+```python
+def calculate_compatibility(user_a, user_b):
+    """
+    Calculate pairwise compatibility score between two users.
+    Returns: float between 0 and 1
+    """
+    
+    # Date Overlap (0.30 weight)
+    date_overlap = max(0, min(user_a.end_date, user_b.end_date) - 
+                           max(user_a.start_date, user_b.start_date))
+    total_days = max(user_a.end_date - user_a.start_date,
+                     user_b.end_date - user_b.start_date)
+    date_score = min(1.0, date_overlap / total_days) if total_days &gt; 0 else 0
+    
+    # Interest Similarity (0.20 weight) - Jaccard similarity
+    interests_a = set(user_a.interests)
+    interests_b = set(user_b.interests)
+    interest_score = len(interests_a &amp; interests_b) / len(interests_a | interests_b) if interests_a | interests_b else 0
+    
+    # Budget Match (0.15 weight)
+    budget_tiers = {'low': 0, 'mid': 1, 'high': 2}
+    budget_diff = abs(budget_tiers[user_a.budget_tier] - budget_tiers[user_b.budget_tier])
+    budget_score = 1.0 if budget_diff == 0 else 0.5 if budget_diff == 1 else 0
+    
+    # Travel Style Compatibility (0.10 weight)
+    style_score = cosine_similarity(user_a.travel_styles_vector, 
+                                   user_b.travel_styles_vector)
+    
+    # Age Compatibility (0.10 weight)
+    max_age_diff = 30  # Max reasonable age difference
+    age_diff = abs(user_a.age - user_b.age)
+    age_score = 1 - (age_diff / max_age_diff)
+    
+    # Language Compatibility (0.05 weight)
+    lang_a = set(user_a.languages)
+    lang_b = set(user_b.languages)
+    lang_score = len(lang_a &amp; lang_b) / len(lang_a | lang_b) if lang_a | lang_b else 1.0
+    
+    # Previous Ratings (0.05 weight)
+    rating_score = (user_a.avg_rating + user_b.avg_rating) / 2  # Normalized 0-1
+    
+    # Trust Score (0.05 weight)
+    trust_score = (user_a.trust_score + user_b.trust_score) / 2
+    
+    # Weighted sum
+    score = (0.30 * date_score + 
+             0.20 * interest_score + 
+             0.15 * budget_score + 
+             0.10 * style_score + 
+             0.10 * age_score + 
+             0.05 * lang_score + 
+             0.05 * rating_score + 
+             0.05 * trust_score)
+    
+    return score
+```
+### 3.3 Group Formation Algorithm — Constrained Greedy with Local Swap
+```python
+def form_groups(candidates, min_size=4, max_size=8):
+    """
+    Form optimal groups from candidate pool using greedy packing with local swap.
+    Returns: List of groups, each containing list of user IDs.
+    """
+    if len(candidates) &lt; min_size:
+        return []  # Not enough candidates
+    
+    # Step 1: Sort candidates by "compatibility potential"
+    # Higher potential = more compatible with others
+    candidates_sorted = sorted(candidates, key=lambda u: u.compatibility_potential, reverse=True)
+    
+    groups = []
+    remaining = set([u.id for u in candidates_sorted])
+    
+    # Step 2: Greedy packing
+    while len(remaining) &gt;= min_size:
+        # Start with the candidate with highest potential
+        seed_id = max(remaining, key=lambda uid: get_compatibility_potential(uid, remaining))
+        remaining.remove(seed_id)
+        
+        # Build group around seed
+        group = [seed_id]
+        
+        # Add candidates based on compatibility with current group
+        while len(group) &lt; max_size and remaining:
+            # Find best candidate to add
+            best_id = None
+            best_score = -1
+            
+            for uid in remaining:
+                # Average compatibility with current group
+                avg_score = sum(get_compatibility_score(uid, gid) for gid in group) / len(group)
+                if avg_score &gt; best_score:
+                    best_score = avg_score
+                    best_id = uid
+            
+            # Add if compatibility is reasonable
+            if best_score &gt;= 0.3:  # Threshold
+                group.append(best_id)
+                remaining.remove(best_id)
+            else:
+                break
+        
+        # Ensure minimum group size
+        if len(group) &gt;= min_size:
+            groups.append(group)
+        else:
+            # Return unused candidates back
+            remaining.update(group)
+            break
+    
+    # Step 3: Local optimization - try swapping to improve compatibility
+    for _ in range(5):  # Iteration limit
+        improved = False
+        for i, group_i in enumerate(groups):
+            for j, group_j in enumerate(groups):
+                if i &gt;= j:
+                    continue
+                # Try swapping one member between groups
+                for uid_i in group_i:
+                    for uid_j in group_j:
+                        # Check if swap improves total compatibility
+                        old_score = get_group_compatibility(group_i) + get_group_compatibility(group_j)
+                        new_group_i = [x for x in group_i if x != uid_i] + [uid_j]
+                        new_group_j = [x for x in group_j if x != uid_j] + [uid_i]
+                        new_score = get_group_compatibility(new_group_i) + get_group_compatibility(new_group_j)
+                        
+                        if new_score &gt; old_score * 1.05:  # 5% improvement threshold
+                            # Perform swap
+                            group_i, group_j = new_group_i, new_group_j
+                            improved = True
+                            break
+                    if improved:
+                        break
+                if improved:
+                    break
+            if improved:
+                break
+        if not improved:
+            break
+    
+    return groups
+```
+### 3.4 Complexity Analysis
+| Stage | Time Complexity | Space Complexity |
+|-------|----------------|------------------|
+| Filtering | O(n) | O(n) |
+| Compatibility Score Computation | O(k²) where k = candidates after filtering | O(k²) for caching |
+| Greedy Packing | O(k × max_size × avg_compatibility) | O(k) |
+| Local Swap Optimization | O(g² × avg_size²) | O(1) |
+| **Total** | **O(n + k² + g² × avg_size²)** | **O(k²)** |
+Where:
+- n = total users
+- k = candidates after filtering (typically ≤ 500)
+- g = number of groups formed
+- avg_size = average group size (4-8)
+### 3.5 Candidate Pruning Strategy
+```python
+def prune_candidates(all_users, user_request):
+    """
+    Multi-stage pruning to reduce candidate pool.
+    Each stage returns a subset of the previous stage.
+    """
+    # Stage 1: Destination
+    stage1 = [u for u in all_users if u.destination == user_request.destination]
+    
+    # Stage 2: Date Window
+    stage2 = [u for u in stage1 if has_date_overlap(u, user_request)]
+    
+    # Stage 3: Budget
+    stage3 = [u for u in stage2 if u.budget_tier == user_request.budget_tier]
+    
+    # Stage 4: Gender Preference (Hard Constraint)
+    stage4 = [u for u in stage3 if is_gender_compatible(u, user_request)]
+    
+    # Stage 5: Age Bucket (Soft - can be relaxed)
+    stage5 = [u for u in stage4 if abs(u.age - user_request.age) &lt;= 15]
+    
+    # Stage 6: Trust Score (Minimum threshold)
+    stage6 = [u for u in stage5 if u.trust_score &gt;= 0.4]
+    
+    # Limit to 500 candidates for performance
+    if len(stage6) &gt; 500:
+        # Keep users with highest compatibility potential
+        stage6 = sorted(stage6, key=lambda u: u.compatibility_potential, reverse=True)[:500]
+    
+    return stage6
+```
+---
+## 4. Database Design
+### 4.1 Physical Schema (DDL)
+```sql
+-- Enable UUID extension
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+-- ============================================================
+-- USERS &amp; AUTH TABLES
+-- ============================================================
+CREATE TABLE users (
+    user_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    phone VARCHAR(20) UNIQUE NOT NULL,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    age INTEGER CHECK (age &gt;= 18 AND age &lt;= 100),
+    gender VARCHAR(10) CHECK (gender IN ('M', 'F', 'Other')),
+    gender_preference VARCHAR(20) CHECK (gender_preference IN ('women-only', 'mixed', 'men-only')),
+    verification_status VARCHAR(20) DEFAULT 'pending' CHECK (verification_status IN ('pending', 'verified', 'rejected', 'expired')),
+    kyc_provider_reference VARCHAR(255),  -- NEVER store Aadhaar
+    trust_score DECIMAL(5,4) DEFAULT 0.5 CHECK (trust_score &gt;= 0 AND trust_score &lt;= 1),
+    travel_styles TEXT[],
+    languages TEXT[],
+    device_info JSONB,
+    emergency_contact JSONB,
+    is_guide BOOLEAN DEFAULT FALSE,
+    last_active_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    version INTEGER DEFAULT 1  -- Optimistic locking
+);
+CREATE INDEX idx_users_phone ON users(phone);
+CREATE INDEX idx_users_email ON users(email);
+CREATE INDEX idx_users_verification_status ON users(verification_status);
+CREATE INDEX idx_users_destination ON users(destination);
+CREATE INDEX idx_users_trust_score ON users(trust_score);
+-- ============================================================
+-- USER PROFILES TABLE
+-- ============================================================
+CREATE TABLE user_profiles (
+    profile_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    bio TEXT,
+    profile_picture_url TEXT,
+    interests TEXT[],
+    travel_experience VARCHAR(20) CHECK (travel_experience IN ('beginner', 'intermediate', 'expert')),
+    preferred_accommodation VARCHAR(20) CHECK (preferred_accommodation IN ('hostel', 'hotel', 'resort', 'camping')),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_user_profiles_user ON user_profiles(user_id);
+-- ============================================================
+-- EMERGENCY CONTACTS TABLE
+-- ============================================================
+CREATE TABLE emergency_contacts (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    name VARCHAR(100) NOT NULL,
+    relationship VARCHAR(50),
+    phone VARCHAR(20) NOT NULL,
+    is_primary BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_emergency_contacts_user ON emergency_contacts(user_id);
+-- ============================================================
+-- TRIPS / MATCH REQUESTS TABLE
+-- ============================================================
+CREATE TABLE trips (
+    trip_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    destination VARCHAR(100) NOT NULL,
+    start_date DATE NOT NULL,
+    end_date DATE NOT NULL,
+    budget_tier VARCHAR(10) CHECK (budget_tier IN ('low', 'mid', 'high')),
+    interests TEXT[],
+    preferred_group_size_min INTEGER DEFAULT 4,
+    preferred_group_size_max INTEGER DEFAULT 8,
+    status VARCHAR(20) DEFAULT 'open' CHECK (status IN ('open', 'matched', 'closed', 'expired')),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    version INTEGER DEFAULT 1
+);
+CREATE INDEX idx_trips_user ON trips(user_id);
+CREATE INDEX idx_trips_destination ON trips(destination);
+CREATE INDEX idx_trips_date_range ON trips(start_date, end_date);
+CREATE INDEX idx_trips_status ON trips(status);
+-- Partition trips by month for large scale
+-- ALTER TABLE trips PARTITION BY RANGE (created_at);
+-- ============================================================
+-- GROUPS TABLE
+-- ============================================================
+CREATE TABLE groups (
+    group_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    destination VARCHAR(100) NOT NULL,
+    start_date DATE NOT NULL,
+    end_date DATE NOT NULL,
+    size INTEGER NOT NULL,
+    guide_id UUID REFERENCES users(user_id),
+    status VARCHAR(20) DEFAULT 'forming' CHECK (status IN ('forming', 'confirmed', 'locked', 'travelling', 'completed', 'archived')),
+    matched_at TIMESTAMPTZ,
+    locked_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    archived_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    version INTEGER DEFAULT 1
+);
+CREATE INDEX idx_groups_status ON groups(status);
+CREATE INDEX idx_groups_destination ON groups(destination);
+CREATE INDEX idx_groups_date_range ON groups(start_date, end_date);
+-- ============================================================
+-- GROUP MEMBERS (Junction Table) - Normalized
+-- ============================================================
+CREATE TABLE group_members (
+    group_id UUID NOT NULL REFERENCES groups(group_id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    compatibility_score DECIMAL(5,4) NOT NULL,
+    role VARCHAR(20) DEFAULT 'member' CHECK (role IN ('member', 'trip_buddy', 'leader')),
+    joined_at TIMESTAMPTZ DEFAULT NOW(),
+    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'rejected')),
+    contributed BOOLEAN DEFAULT FALSE,
+    PRIMARY KEY (group_id, user_id)
+);
+CREATE INDEX idx_group_members_user ON group_members(user_id);
+CREATE INDEX idx_group_members_role ON group_members(role);
+-- ============================================================
+-- USER COMPATIBILITY (Cached Pairwise)
+-- ============================================================
+CREATE TABLE user_compatibility (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_a_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    user_b_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    compatibility_score DECIMAL(5,4) NOT NULL,
+    feature_breakdown JSONB,  -- Stores individual feature scores for transparency
+    computed_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (user_a_id, user_b_id),
+    CHECK (user_a_id &lt; user_b_id)  -- Prevent duplicates
+);
+CREATE INDEX idx_user_compatibility_score ON user_compatibility(compatibility_score);
+CREATE INDEX idx_user_compatibility_computed ON user_compatibility(computed_at);
+-- ============================================================
+-- MATCHES TABLE
+-- ============================================================
+CREATE TABLE matches (
+    match_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    group_id UUID NOT NULL REFERENCES groups(group_id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    compatibility_score DECIMAL(5,4) NOT NULL,
+    matched_at TIMESTAMPTZ DEFAULT NOW(),
+    notification_sent BOOLEAN DEFAULT FALSE
+);
+CREATE INDEX idx_matches_group ON matches(group_id);
+CREATE INDEX idx_matches_user ON matches(user_id);
+-- ============================================================
+-- RATINGS TABLE (Blind Ratings)
+-- ============================================================
+CREATE TABLE ratings (
+    rating_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    group_id UUID NOT NULL REFERENCES groups(group_id) ON DELETE CASCADE,
+    rater_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    ratee_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    score INTEGER NOT NULL CHECK (score &gt;= 1 AND score &lt;= 5),
+    comment TEXT,
+    is_blind BOOLEAN DEFAULT TRUE,
+    revealed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (group_id, rater_id, ratee_id)
+);
+CREATE INDEX idx_ratings_group ON ratings(group_id);
+CREATE INDEX idx_ratings_rater ON ratings(rater_id);
+CREATE INDEX idx_ratings_ratee ON ratings(ratee_id);
+-- ============================================================
+-- REPORTS / FLAGS TABLE
+-- ============================================================
+CREATE TABLE reports (
+    report_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    reporter_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    reported_user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    group_id UUID REFERENCES groups(group_id) ON DELETE SET NULL,
+    reason VARCHAR(20) NOT NULL CHECK (reason IN ('harassment', 'fraud', 'inappropriate', 'other')),
+    description TEXT,
+    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'reviewed', 'dismissed', 'actioned')),
+    risk_score DECIMAL(5,4),
+    reviewed_by UUID REFERENCES users(user_id) ON DELETE SET NULL,
+    reviewed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_reports_reported ON reports(reported_user_id);
+CREATE INDEX idx_reports_status ON reports(status);
+-- ============================================================
+-- BOOKINGS TABLE
+-- ============================================================
+CREATE TABLE bookings (
+    booking_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    group_id UUID NOT NULL REFERENCES groups(group_id) ON DELETE CASCADE,
+    guide_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'authorized', 'confirmed', 'completed', 'refunded', 'cancelled')),
+    amount DECIMAL(10,2) NOT NULL,
+    commission DECIMAL(10,2) NOT NULL,
+    payment_intent_id VARCHAR(100),
+    booked_at TIMESTAMPTZ DEFAULT NOW(),
+    confirmed_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    refunded_at TIMESTAMPTZ,
+    version INTEGER DEFAULT 1
+);
+CREATE INDEX idx_bookings_group ON bookings(group_id);
+CREATE INDEX idx_bookings_guide ON bookings(guide_id);
+CREATE INDEX idx_bookings_status ON bookings(status);
+-- ============================================================
+-- EXPENSES TABLE
+-- ============================================================
+CREATE TABLE expenses (
+    expense_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    group_id UUID NOT NULL REFERENCES groups(group_id) ON DELETE CASCADE,
+    paid_by UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    amount DECIMAL(10,2) NOT NULL,
+    description VARCHAR(255) NOT NULL,
+    category VARCHAR(20) CHECK (category IN ('food', 'accommodation', 'transport', 'activity', 'other')),
+    split_type VARCHAR(10) DEFAULT 'equal' CHECK (split_type IN ('equal', 'custom')),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_expenses_group ON expenses(group_id);
+-- ============================================================
+-- NOTIFICATIONS TABLE
+-- ============================================================
+CREATE TABLE notifications (
+    notification_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    type VARCHAR(20) NOT NULL CHECK (type IN ('match', 'trip', 'guide', 'safety', 'system')),
+    title VARCHAR(200) NOT NULL,
+    body TEXT NOT NULL,
+    data JSONB,
+    channel VARCHAR(20) NOT NULL CHECK (channel IN ('push', 'email', 'sms')),
+    read_at TIMESTAMPTZ,
+    delivered_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_notifications_user ON notifications(user_id);
+CREATE INDEX idx_notifications_read ON notifications(read_at);
+-- ============================================================
+-- AUDIT LOG TABLE
+-- ============================================================
+CREATE TABLE audit_logs (
+    log_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID REFERENCES users(user_id) ON DELETE SET NULL,
+    action VARCHAR(50) NOT NULL,
+    entity_type VARCHAR(50) NOT NULL,
+    entity_id UUID,
+    changes JSONB,
+    ip_address INET,
+    user_agent TEXT,
+    metadata JSONB,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_audit_logs_user ON audit_logs(user_id);
+CREATE INDEX idx_audit_logs_entity ON audit_logs(entity_type, entity_id);
+-- ============================================================
+-- CONSENT RECORDS TABLE (for compliance)
+-- ============================================================
+CREATE TABLE consent_records (
+    consent_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    consent_type VARCHAR(20) NOT NULL CHECK (consent_type IN ('location', 'terms', 'marketing', 'data_processing')),
+    granted BOOLEAN DEFAULT TRUE,
+    granted_at TIMESTAMPTZ DEFAULT NOW(),
+    revoked_at TIMESTAMPTZ,
+    ip_address INET,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_consent_records_user ON consent_records(user_id);
+-- ============================================================
+-- FEATURE FLAGS TABLE
+-- ============================================================
+CREATE TABLE feature_flags (
+    flag_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name VARCHAR(100) UNIQUE NOT NULL,
+    enabled BOOLEAN DEFAULT FALSE,
+    description TEXT,
+    rollout_percentage INTEGER DEFAULT 100 CHECK (rollout_percentage &gt;= 0 AND rollout_percentage &lt;= 100),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+-- ============================================================
+-- GUIDE PROFILES TABLE
+-- ============================================================
+CREATE TABLE guide_profiles (
+    guide_id UUID PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
+    specialties TEXT[],
+    experience_years INTEGER DEFAULT 0,
+    languages TEXT[],
+    availability JSONB,  -- Calendar data
+    rating_avg DECIMAL(3,2) DEFAULT 0,
+    total_ratings INTEGER DEFAULT 0,
+    hourly_rate DECIMAL(10,2),
+    verification_status VARCHAR(20) DEFAULT 'pending' CHECK (verification_status IN ('pending', 'verified', 'rejected')),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_guide_profiles_rating ON guide_profiles(rating_avg);
+```
+### 4.2 Index Strategy Summary
+| Table | Index | Type | Purpose |
+|-------|-------|------|---------|
+| users | phone, email | Unique | Fast lookup by credentials |
+| users | verification_status | B-tree | Filter unverified users |
+| users | trust_score | B-tree | Filter low-trust users |
+| trips | destination, date_range | Composite | Matching pipeline filtering |
+| trips | status | B-tree | Filter open trips |
+| groups | status, destination | Composite | Group state queries |
+| group_members | user_id | B-tree | Find user's groups |
+| user_compatibility | score, computed_at | B-tree | Cache invalidation |
+| ratings | ratee_id | B-tree | User reputation queries |
+| reports | reported_user_id, status | Composite | Risk engine queries |
+### 4.3 Partitioning Strategy
+```sql
+-- Example: Partition trips by month
+CREATE TABLE trips_partitioned (
+    LIKE trips INCLUDING ALL
+) PARTITION BY RANGE (created_at);
+-- Create monthly partitions
+CREATE TABLE trips_2026_01 PARTITION OF trips_partitioned
+    FOR VALUES FROM ('2026-01-01') TO ('2026-02-01');
+-- Retention: Drop partitions older than 2 years
+DROP TABLE trips_2024_01;
+```
+### 4.4 Backup &amp; Recovery
+| Parameter | Target |
+|-----------|--------|
+| **RPO** | &lt; 1 hour |
+| **RTO** | &lt; 4 hours |
+| **Backup Frequency** | Daily full backup + WAL archiving |
+| **Retention** | 30 days (daily), 12 months (monthly) |
+| **Storage** | AWS S3 with cross-region replication |
+---
+## 5. API Contracts
+### 5.1 REST API (OpenAPI 3.1)
+```yaml
+openapi: 3.1.0
+info:
+  title: TravelMate API
+  version: 2.0.0
+  description: Group Travel Matching Platform API
+servers:
+  - url: https://api.travelmate.com/v2
+paths:
+  # ============================================================
+  # AUTH ENDPOINTS
+  # ============================================================
+  /auth/register:
+    post:
+      summary: Register new user
+      operationId: registerUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - phone
+                - email
+                - name
+                - password
+              properties:
+                phone:
+                  type: string
+                  pattern: '^[0-9]{10}$'
+                email:
+                  type: string
+                  format: email
+                name:
+                  type: string
+                  minLength: 2
+                password:
+                  type: string
+                  minLength: 8
+                gender:
+                  type: string
+                  enum: [M, F, Other]
+                gender_preference:
+                  type: string
+                  enum: [women-only, mixed, men-only]
+                age:
+                  type: integer
+                  minimum: 18
+                  maximum: 100
+      responses:
+        '201':
+          description: User registered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /auth/login:
+    post:
+      summary: Authenticate user
+      operationId: loginUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - password
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                  refresh_token:
+                    type: string
+                  expires_in:
+                    type: integer
+  /auth/verify-otp:
+    post:
+      summary: Verify OTP for phone
+      operationId: verifyOTP
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - phone
+                - otp
+              properties:
+                phone:
+                  type: string
+                otp:
+                  type: string
+                  pattern: '^[0-9]{6}$'
+  # ============================================================
+  # USER ENDPOINTS
+  # ============================================================
+  /users/me:
+    get:
+      summary: Get current user profile
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: User profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+  /users/me/kyc:
+    post:
+      summary: Submit KYC verification
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - kyc_provider
+                - verification_data
+              properties:
+                kyc_provider:
+                  type: string
+                  enum: [setu, surepass, idfy]
+                verification_data:
+                  type: object
+                  description: Provider-specific verification data
+      responses:
+        '202':
+          description: KYC verification submitted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KYCStatusResponse'
+  /users/me/trust-score:
+    get:
+      summary: Get trust score breakdown
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Trust score details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrustScoreResponse'
+  # ============================================================
+  # TRIP / MATCH ENDPOINTS
+  # ============================================================
+  /trips:
+    post:
+      summary: Create a travel request
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TripRequest'
+      responses:
+        '201':
+          description: Trip created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TripResponse'
+  /matches:
+    post:
+      summary: Request matchmaking
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                trip_id:
+                  type: string
+                force_refresh:
+                  type: boolean
+                  default: false
+      responses:
+        '202':
+          description: Match request accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  request_id:
+                    type: string
+                  estimated_completion:
+                    type: string
+                    format: date-time
+        '429':
+          description: Rate limit exceeded
+  /matches/{match_id}/status:
+    get:
+      summary: Get match status
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: match_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Match status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MatchStatusResponse'
+  # ============================================================
+  # GROUP ENDPOINTS
+  # ============================================================
+  /groups/{group_id}:
+    get:
+      summary: Get group details
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: group_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Group details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupResponse'
+  /groups/{group_id}/members:
+    get:
+      summary: Get group members
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: group_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Group members
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MemberResponse'
+  /groups/{group_id}/confirm:
+    post:
+      summary: Confirm group participation
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: group_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Confirmation successful
+  # ============================================================
+  # ITINERARY ENDPOINTS
+  # ============================================================
+  /groups/{group_id}/itinerary:
+    get:
+      summary: Get group itinerary
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: group_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Itinerary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItineraryResponse'
+    put:
+      summary: Update itinerary (optimistic locking)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: group_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: If-Match
+          in: header
+          required: true
+          schema:
+            type: string
+          description: Version ETag for optimistic locking
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ItineraryUpdateRequest'
+      responses:
+        '200':
+          description: Itinerary updated
+          headers:
+            ETag:
+              schema:
+                type: string
+        '409':
+          description: Conflict - version mismatch
+  # ============================================================
+  # GUIDE ENDPOINTS
+  # ============================================================
+  /guides:
+    get:
+      summary: List available guides
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: destination
+          in: query
+          schema:
+            type: string
+        - name: date
+          in: query
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: List of guides
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/GuideProfile'
+  /groups/{group_id}/guides/request:
+    post:
+      summary: Request a guide for group
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: group_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - guide_id
+              properties:
+                guide_id:
+                  type: string
+                message:
+                  type: string
+      responses:
+        '201':
+          description: Guide request sent
+  # ============================================================
+  # RATING ENDPOINTS
+  # ============================================================
+  /groups/{group_id}/ratings:
+    post:
+      summary: Submit blind rating
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: group_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - ratee_id
+                - score
+              properties:
+                ratee_id:
+                  type: string
+                score:
+                  type: integer
+                  minimum: 1
+                  maximum: 5
+                comment:
+                  type: string
+      responses:
+        '201':
+          description: Rating submitted
+        '409':
+          description: Rating already submitted
+  # ============================================================
+  # REPORT ENDPOINTS
+  # ============================================================
+  /users/{user_id}/report:
+    post:
+      summary: Report a user
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - reason
+              properties:
+                reason:
+                  type: string
+                  enum: [harassment, fraud, inappropriate, other]
+                description:
+                  type: string
+                group_id:
+                  type: string
+      responses:
+        '201':
+          description: Report submitted
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+    UserResponse:
+      type: object
+      properties:
+        user_id:
+          type: string
+        name:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+        verification_status:
+          type: string
+        trust_score:
+          type: number
+        created_at:
+          type: string
+          format: date-time
+    UserProfile:
+      allOf:
+        - $ref: '#/components/schemas/UserResponse'
+        - type: object
+          properties:
+            gender:
+              type: string
+            age:
+              type: integer
+            travel_styles:
+              type: array
+              items:
+                type: string
+            languages:
+              type: array
+              items:
+                type: string
+            bio:
+              type: string
+            profile_picture_url:
+              type: string
+            interests:
+              type: array
+              items:
+                type: string
+    TripRequest:
+      type: object
+      required:
+        - destination
+        - start_date
+        - end_date
+        - budget_tier
+      properties:
+        destination:
+          type: string
+        start_date:
+          type: string
+          format: date
+        end_date:
+          type: string
+          format: date
+        budget_tier:
+          type: string
+          enum: [low, mid, high]
+        interests:
+          type: array
+          items:
+            type: string
+        preferred_group_size_min:
+          type: integer
+          default: 4
+        preferred_group_size_max:
+          type: integer
+          default: 8
+    GroupResponse:
+      type: object
+      properties:
+        group_id:
+          type: string
+        destination:
+          type: string
+        start_date:
+          type: string
+          format: date
+        end_date:
+          type: string
+          format: date
+        size:
+          type: integer
+        status:
+          type: string
+          enum: [forming, confirmed, locked, travelling, completed, archived]
+        members:
+          type: array
+          items:
+            $ref: '#/components/schemas/MemberResponse'
+        guide:
+          $ref: '#/components/schemas/GuideSummary'
+    MemberResponse:
+      type: object
+      properties:
+        user_id:
+          type: string
+        name:
+          type: string
+        age:
+          type: integer
+        trust_score:
+          type: number
+        verification_status:
+          type: string
+        role:
+          type: string
+          enum: [member, trip_buddy, leader]
+        compatibility_score:
+          type: number
+    ItineraryResponse:
+      type: object
+      properties:
+        trip_id:
+          type: string
+        group_id:
+          type: string
+        itinerary:
+          type: array
+          items:
+            type: object
+            properties:
+              day:
+                type: integer
+              activities:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    time:
+                      type: string
+                    title:
+                      type: string
+                    description:
+                      type: string
+                    location:
+                      type: string
+        version:
+          type: integer
+        last_updated:
+          type: string
+          format: date-time
+    GuideProfile:
+      type: object
+      properties:
+        guide_id:
+          type: string
+        name:
+          type: string
+        specialties:
+          type: array
+          items:
+            type: string
+        experience_years:
+          type: integer
+        rating_avg:
+          type: number
+        total_ratings:
+          type: integer
+        hourly_rate:
+          type: number
+        availability:
+          type: object
+        verification_status:
+          type: string
+```
+### 5.2 Internal gRPC API (Protocol Buffers)
+```protobuf
+syntax = "proto3";
+package travelmate.v1;
+// ============================================================
+// MATCHING SERVICE
+// ============================================================
+service MatchingService {
+    rpc FindMatches (FindMatchesRequest) returns (FindMatchesResponse);
+    rpc GetMatchStatus (GetMatchStatusRequest) returns (GetMatchStatusResponse);
+    rpc RunMatchingBatch (RunMatchingBatchRequest) returns (RunMatchingBatchResponse);
+}
+message FindMatchesRequest {
+    string user_id = 1;
+    string trip_id = 2;
+    bool force_refresh = 3;
+    MatchingPreferences preferences = 4;
+}
+message MatchingPreferences {
+    int32 min_group_size = 1;
+    int32 max_group_size = 2;
+    repeated string interests = 3;
+    string gender_preference = 4;
+}
+message FindMatchesResponse {
+    string request_id = 1;
+    repeated GroupMatch groups = 2;
+    double processing_time_ms = 3;
+}
+message GroupMatch {
+    string group_id = 1;
+    repeated UserSummary members = 2;
+    double avg_compatibility = 3;
+    map&lt;string, double&gt; compatibility_scores = 4;
+}
+message RunMatchingBatchRequest {
+    string destination = 1;
+    string date_window_start = 2;
+    string date_window_end = 3;
+    string budget_tier = 4;
+    int32 min_group_size = 5;
+    int32 max_group_size = 6;
+}
+message RunMatchingBatchResponse {
+    int32 groups_formed = 1;
+    int32 users_matched = 2;
+    repeated string group_ids = 3;
+}
+// ============================================================
+// USER SERVICE
+// ============================================================
+service UserService {
+    rpc GetUserProfile (GetUserProfileRequest) returns (UserProfile);
+    rpc UpdateUserProfile (UpdateUserProfileRequest) returns (UserProfile);
+    rpc GetTrustScore (GetTrustScoreRequest) returns (TrustScore);
+    rpc UpdateTrustScore (UpdateTrustScoreRequest) returns (TrustScore);
+    rpc GetKYCStatus (GetKYCStatusRequest) returns (KYCStatus);
+}
+message UserProfile {
+    string user_id = 1;
+    string name = 2;
+    string email = 3;
+    string phone = 4;
+    int32 age = 5;
+    string gender = 6;
+    string gender_preference = 7;
+    repeated string interests = 8;
+    repeated string travel_styles = 9;
+    repeated string languages = 10;
+    string verification_status = 11;
+    double trust_score = 12;
+    bool is_guide = 13;
+}
+message TrustScore {
+    double overall = 1;
+    map&lt;string, double&gt; breakdown = 2;
+    int32 rating_count = 3;
+}
+// ============================================================
+// GROUP SERVICE
+// ============================================================
+service GroupService {
+    rpc CreateGroup (CreateGroupRequest) returns (Group);
+    rpc GetGroup (GetGroupRequest) returns (Group);
+    rpc UpdateGroupStatus (UpdateGroupStatusRequest) returns (Group);
+    rpc AddMembers (AddMembersRequest) returns (Group);
+    rpc ConfirmGroup (ConfirmGroupRequest) returns (Group);
+}
+message Group {
+    string group_id = 1;
+    string destination = 2;
+    string start_date = 3;
+    string end_date = 4;
+    int32 size = 5;
+    string status = 6;
+    repeated GroupMember members = 7;
+    string guide_id = 8;
+    string created_at = 9;
+}
+message GroupMember {
+    string user_id = 1;
+    string role = 2;
+    double compatibility_score = 3;
+    string status = 4;
+}
+// ============================================================
+// NOTIFICATION SERVICE
+// ============================================================
+service NotificationService {
+    rpc SendNotification (SendNotificationRequest) returns (SendNotificationResponse);
+    rpc SendGroupNotification (SendGroupNotificationRequest) returns (SendGroupNotificationResponse);
+}
+message Notification {
+    string user_id = 1;
+    string type = 2;
+    string title = 3;
+    string body = 4;
+    map&lt;string, string&gt; data = 5;
+    repeated string channels = 6;
+}
+```
+---
+## 6. Event Schemas (Kafka Topics)
+### 6.1 Topic Definitions
+| Topic | Partition Key | Retention | Schema |
+|-------|--------------|-----------|--------|
+| `user.registered` | user_id | 7 days | JSON Schema |
+| `user.verified` | user_id | 7 days | JSON Schema |
+| `match.found` | trip_id | 7 days | JSON Schema |
+| `group.formed` | group_id | 30 days | JSON Schema |
+| `group.status.changed` | group_id | 30 days | JSON Schema |
+| `rating.submitted` | group_id | 30 days | JSON Schema |
+| `report.created` | reported_user_id | 90 days | JSON Schema |
+| `notification.sent` | user_id | 7 days | JSON Schema |
+| `analytics.event` | event_type | 90 days | JSON Schema |
+### 6.2 Event Schemas (JSON Schema)
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "UserRegistered": {
+      "type": "object",
+      "required": ["user_id", "email", "name", "registered_at"],
+      "properties": {
+        "user_id": { "type": "string", "format": "uuid" },
+        "email": { "type": "string", "format": "email" },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "gender": { "type": "string", "enum": ["M", "F", "Other"] },
+        "gender_preference": { "type": "string", "enum": ["women-only", "mixed", "men-only"] },
+        "registered_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    
+    "GroupFormed": {
+      "type": "object",
+      "required": ["group_id", "members", "destination", "start_date", "end_date", "matched_at"],
+      "properties": {
+        "group_id": { "type": "string", "format": "uuid" },
+        "members": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "user_id": { "type": "string", "format": "uuid" },
+              "compatibility_score": { "type": "number", "minimum": 0, "maximum": 1 }
+            }
+          }
+        },
+        "destination": { "type": "string" },
+        "start_date": { "type": "string", "format": "date" },
+        "end_date": { "type": "string", "format": "date" },
+        "matched_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "RatingSubmitted": {
+      "type": "object",
+      "required": ["rating_id", "group_id", "rater_id", "ratee_id", "score"],
+      "properties": {
+        "rating_id": { "type": "string", "format": "uuid" },
+        "group_id": { "type": "string", "format": "uuid" },
+        "rater_id": { "type": "string", "format": "uuid" },
+        "ratee_id": { "type": "string", "format": "uuid" },
+        "score": { "type": "integer", "minimum": 1, "maximum": 5 },
+        "comment": { "type": "string" },
+        "is_blind": { "type": "boolean", "default": true },
+        "created_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "RiskAlert": {
+      "type": "object",
+      "required": ["alert_id", "user_id", "risk_score", "trigger", "created_at"],
+      "properties": {
+        "alert_id": { "type": "string", "format": "uuid" },
+        "user_id": { "type": "string", "format": "uuid" },
+        "risk_score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "trigger": { "type": "string", "enum": ["report_count", "rating_drop", "suspicious_activity"] },
+        "details": { "type": "object" },
+        "created_at": { "type": "string", "format": "date-time" }
+      }
+    }
+  }
+}
+```
+---
+## 7. State Machines
+### 7.1 Group Lifecycle (Implementation)
+```mermaid
+stateDiagram-v2
+    [*] --&gt; Forming: Group created
+    Forming --&gt; Confirmed: Size &gt;= min_size
+    Forming --&gt; Archived: Admin override or timeout
+    
+    Confirmed --&gt; Locked: All members confirm
+    Confirmed --&gt; Archived: Admin override or timeout
+    
+    Locked --&gt; Travelling: Trip start date arrives
+    Locked --&gt; Archived: Admin override
+    
+    Travelling --&gt; Completed: Trip end date passes
+    Travelling --&gt; Archived: Admin override or incident
+    
+    Completed --&gt; Archived: 30 days after completion
+    
+    Archived --&gt; [*]: Final state
+```
+**State Transition Rules:**
+```javascript
+const groupStateTransitions = {
+  'forming': {
+    allowedTransitions: ['confirmed', 'archived'],
+    trigger: {
+      'confirmed': (group) =&gt; group.members.length &gt;= group.min_size,
+      'archived': (group) =&gt; group.created_at &lt; Date.now() - 7 * 24 * 60 * 60 * 1000 // 7 days timeout
+    }
+  },
+  'confirmed': {
+    allowedTransitions: ['locked', 'archived'],
+    trigger: {
+      'locked': (group) =&gt; group.members.every(m =&gt; m.status === 'accepted'),
+      'archived': (group) =&gt; group.confirmed_at &lt; Date.now() - 3 * 24 * 60 * 60 * 1000
+    }
+  },
+  'locked': {
+    allowedTransitions: ['travelling', 'archived'],
+    trigger: {
+      'travelling': (group) =&gt; group.start_date &lt;= new Date(),
+      'archived': () =&gt; false // Admin only
+    }
+  },
+  'travelling': {
+    allowedTransitions: ['completed', 'archived'],
+    trigger: {
+      'completed': (group) =&gt; group.end_date &lt; new Date()
+    }
+  },
+  'completed': {
+    allowedTransitions: ['archived'],
+    trigger: {
+      'archived': (group) =&gt; group.completed_at &lt; Date.now() - 30 * 24 * 60 * 60 * 1000
+    }
+  },
+  'archived': {
+    allowedTransitions: [] // Terminal state
+  }
+};
+```
+### 7.2 Booking Lifecycle
+```mermaid
+stateDiagram-v2
+    [*] --&gt; Pending: Guide requested
+    Pending --&gt; Authorized: Payment initiated
+    Pending --&gt; Cancelled: Request withdrawn
+    Pending --&gt; Refunded: Payment failed
+    
+    Authorized --&gt; Confirmed: Payment successful
+    Authorized --&gt; Refunded: Payment failed/voided
+    
+    Confirmed --&gt; Completed: Trip completed
+    Confirmed --&gt; Refunded: Trip cancelled
+    
+    Completed --&gt; [*]
+    Refunded --&gt; [*]
+    Cancelled --&gt; [*]
+```
+### 7.3 Verification Lifecycle
+```mermaid
+stateDiagram-v2
+    [*] --&gt; Pending: User registered
+    Pending --&gt; InProgress: KYC submitted
+    Pending --&gt; Expired: Submission timeout
+    
+    InProgress --&gt; Verified: Provider confirms
+    InProgress --&gt; Rejected: Provider rejects
+    InProgress --&gt; Expired: Provider timeout
+    
+    Verified --&gt; Expired: Annual re-verification due
+    Verified --&gt; [*]
+    
+    Rejected --&gt; InProgress: User appeals
+    Rejected --&gt; [*]
+    
+    Expired --&gt; InProgress: User re-submits
+    Expired --&gt; [*]
+```
+---
+## 8. Security Architecture
+### 8.1 Authentication Flow
+```mermaid
+sequenceDiagram
+    participant Client
+    participant APIGateway
+    participant AuthService
+    participant UserDB
+    
+    Client-&gt;&gt;APIGateway: POST /auth/login (email, password)
+    APIGateway-&gt;&gt;AuthService: Forward request
+    
+    AuthService-&gt;&gt;UserDB: SELECT user WHERE email = ?
+    UserDB--&gt;&gt;AuthService: User record
+    
+    AuthService-&gt;&gt;AuthService: Verify password (bcrypt)
+    AuthService-&gt;&gt;AuthService: Generate JWT (RS256)
+    AuthService--&gt;&gt;APIGateway: JWT + Refresh Token
+    
+    APIGateway--&gt;&gt;Client: Access Token (expires 24h)
+    
+    Note over Client,APIGateway: Subsequent requests
+    Client-&gt;&gt;APIGateway: GET /users/me (Authorization: Bearer JWT)
+    APIGateway-&gt;&gt;APIGateway: Verify JWT signature
+    APIGateway-&gt;&gt;AuthService: Forward with user claims
+    AuthService--&gt;&gt;APIGateway: User profile
+    APIGateway--&gt;&gt;Client: User profile
+```
+### 8.2 JWT Claims
+```json
+{
+  "iss": "travelmate.auth",
+  "sub": "user-123",
+  "aud": "travelmate.api",
+  "exp": 1735689600,
+  "iat": 1735686000,
+  "roles": ["user"],
+  "scope": "read write",
+  "device_id": "device-456",
+  "verification_status": "verified"
+}
+```
+### 8.3 Security Hardening Checklist (Implementation)
+| # | Control | Implementation |
+|---|---------|----------------|
+| 1 | JWT Authentication | RS256 with 2048-bit RSA keys, rotated every 6 months |
+| 2 | Password Hashing | bcrypt with cost factor 12 |
+| 3 | TLS | TLS 1.3 enforced for all endpoints |
+| 4 | Rate Limiting | 100 req/min per IP, 1000 req/min per user |
+| 5 | SQL Injection | Parameterized queries (prepared statements) |
+| 6 | XSS Protection | CSP headers, output encoding |
+| 7 | CSRF | OAuth 2.1 PKCE, SameSite cookies |
+| 8 | PII Encryption | AES-256-GCM for PII fields |
+| 9 | Audit Logs | All admin actions logged |
+| 10 | Secrets Management | AWS Secrets Manager |
+| 11 | Input Validation | JSON Schema validation |
+| 12 | CORS | Strict origin whitelist |
+### 8.4 KYC Integration Architecture
+```mermaid
+sequenceDiagram
+    participant User
+    participant Client
+    participant AuthService
+    participant KYCProvider
+    participant UserDB
+    participant Kafka
+    
+    User-&gt;&gt;Client: Submit Aadhaar/DigiLocker
+    Client-&gt;&gt;AuthService: POST /users/me/kyc
+    
+    AuthService-&gt;&gt;AuthService: Generate KYC token
+    AuthService-&gt;&gt;KYCProvider: Send verification request
+    
+    KYCProvider--&gt;&gt;AuthService: Verification URL
+    
+    AuthService--&gt;&gt;Client: Redirect URL
+    
+    User-&gt;&gt;Client: Complete verification
+    Client-&gt;&gt;KYCProvider: User completes
+    
+    KYCProvider-&gt;&gt;AuthService: Webhook callback (verified/rejected)
+    
+    AuthService-&gt;&gt;UserDB: UPDATE verification_status
+    AuthService-&gt;&gt;UserDB: UPDATE trust_score (boost)
+    
+    AuthService-&gt;&gt;Kafka: Emit UserVerified event
+    
+    AuthService-&gt;&gt;Client: Notify completion
+```
+**Critical Security:** Store only `kyc_provider_reference`, never Aadhaar documents or personal data.
+---
+## 9. Observability &amp; Monitoring
+### 9.1 Metrics (Prometheus)
+```yaml
+# Service-level metrics
+metrics:
+  - http_requests_total:
+      labels: [service, route, method, status_code]
+      type: counter
+      
+  - http_request_duration_seconds:
+      labels: [service, route, method]
+      type: histogram
+      buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5]
+      
+  - db_query_duration_seconds:
+      labels: [service, table, operation]
+      type: histogram
+      
+  - cache_hit_ratio:
+      labels: [service, cache_type]
+      type: gauge
+      
+  - kafka_consumer_lag:
+      labels: [service, topic, partition]
+      type: gauge
+      
+  - active_sessions:
+      type: gauge
+      
+  - matching_job_duration_seconds:
+      labels: [destination, status]
+      type: histogram
+# Business metrics
+  - daily_active_users:
+      type: gauge
+      
+  - groups_formed_total:
+      labels: [destination]
+      type: counter
+      
+  - match_success_rate:
+      type: gauge
+      
+  - verification_completion_rate:
+      type: gauge
+```
+### 9.2 SLO/SLI Definitions
+| Service | SLI | SLO |
+|---------|-----|-----|
+| API Gateway | Success rate (2xx/4xx) | 99.9% |
+| API Gateway | Latency (p95) | &lt; 300ms |
+| Auth Service | Login success rate | 99.9% |
+| Auth Service | Login latency (p95) | &lt; 500ms |
+| Matching Service | Match success rate | 99% |
+| Matching Service | Match latency (p95) | &lt; 5 minutes |
+| Matching Service | Algorithm runtime | &lt; 5 min for 10K users |
+| User Service | Profile read latency (p95) | &lt; 100ms |
+| Notification Service | Delivery rate | 99.5% |
+| Database | Query latency (p95) | &lt; 50ms |
+| Database | Replication lag | &lt; 5s |
+### 9.3 Alert Rules (Prometheus)
+```yaml
+groups:
+  - name: core_alerts
+    rules:
+      - alert: APIHighErrorRate
+        expr: |
+          (sum(rate(http_requests_total{status_code=~"5.."}[5m])) 
+           / sum(rate(http_requests_total[5m]))) &gt; 0.01
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "API error rate exceeds 1%"
+          
+      - alert: HighLatency
+        expr: |
+          histogram_quantile(0.95, 
+            rate(http_request_duration_seconds_bucket[5m])) &gt; 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "p95 latency exceeds 500ms"
+          
+      - alert: MatchingJobStuck
+        expr: |
+          time() - matching_job_start_timestamp &gt; 600
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Matching job running &gt; 10 minutes"
+          
+      - alert: DatabaseReplicationLag
+        expr: |
+          pg_replication_lag_seconds &gt; 60
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Replication lag exceeds 60s"
+```
+---
+## 10. Deployment Architecture
+### 10.1 Kubernetes Manifests (Helm Template)
+```yaml
+# values.yaml
+replicaCount: 3
+image:
+  repository: travelmate/matching-service
+  tag: latest
+  pullPolicy: IfNotPresent
+service:
+  type: ClusterIP
+  port: 8080
+  grpcPort: 9090
+resources:
+  requests:
+    memory: "512Mi"
+    cpu: "250m"
+  limits:
+    memory: "1Gi"
+    cpu: "500m"
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+database:
+  host: postgres-primary.travelmate.svc.cluster.local
+  database: travelmate
+  pool:
+    max: 20
+    idle: 5
+redis:
+  host: redis.travelmate.svc.cluster.local
+  port: 6379
+kafka:
+  brokers:
+    - kafka-0.travelmate.svc.cluster.local:9092
+    - kafka-1.travelmate.svc.cluster.local:9092
+  topics:
+    matching: "travelmate.matching"
+    group: "travelmate.group"
+    notification: "travelmate.notification"
+observability:
+  metrics:
+    enabled: true
+    port: 9090
+  tracing:
+    enabled: true
+    endpoint: jaeger.travelmate.svc.cluster.local:4318
+security:
+  jwt:
+    publicKeySecret: jwt-public-key
+```
+### 10.2 CI/CD Pipeline (GitHub Actions)
+```yaml
+name: CI/CD Pipeline
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run test:coverage
+      - run: npm run type-check
+      
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' &amp;&amp; github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Login to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.REGISTRY_URL }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ secrets.REGISTRY_URL }}/travelmate/${{ github.event.repository.name }}:${{ github.sha }}
+            ${{ secrets.REGISTRY_URL }}/travelmate/${{ github.event.repository.name }}:latest
+          cache-from: type=registry,ref=${{ secrets.REGISTRY_URL }}/travelmate/${{ github.event.repository.name }}:buildcache
+          cache-to: type=registry,ref=${{ secrets.REGISTRY_URL }}/travelmate/${{ github.event.repository.name }}:buildcache,mode=max
+  deploy-staging:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' &amp;&amp; github.ref == 'refs/heads/main'
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-helm@v4
+      - name: Deploy to staging
+        run: |
+          helm upgrade --install travelmate-${{ github.event.repository.name }} \
+            ./charts/${{ github.event.repository.name }} \
+            -f ./charts/${{ github.event.repository.name }}/values-staging.yaml \
+            --set image.tag=${{ github.sha }} \
+            --wait \
+            --timeout 5m
+  promote-to-prod:
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-helm@v4
+      - name: Promote to production
+        run: |
+          helm upgrade --install travelmate-${{ github.event.repository.name }} \
+            ./charts/${{ github.event.repository.name }} \
+            -f ./charts/${{ github.event.repository.name }}/values-prod.yaml \
+            --set image.tag=${{ github.sha }} \
+            --wait \
+            --timeout 10m
+```
+---
+## 11. Testing Strategy
+### 11.1 Test Pyramid
+```
+        /\
+       /  \      E2E Tests (10%)
+      /____\
+     /      \    Integration Tests (30%)
+    /________\
+   /          \  Unit Tests (60%)
+  /____________\
+```
+### 11.2 Unit Test Example (Matching Algorithm)
+```javascript
+describe('Matching Algorithm', () =&gt; {
+  test('calculateCompatibility returns correct score', () =&gt; {
+    const userA = { 
+      interests: ['trek', 'photography'], 
+      age: 28, 
+      budget_tier: 'mid',
+      trust_score: 0.8
+    };
+    const userB = { 
+      interests: ['trek', 'food'], 
+      age: 32, 
+      budget_tier: 'mid',
+      trust_score: 0.7
+    };
+    
+    const score = calculateCompatibility(userA, userB);
+    
+    expect(score).toBeGreaterThan(0.6);
+    expect(score).toBeLessThan(0.9);
+  });
+  
+  test('gender preference hard rejection', () =&gt; {
+    const userA = { gender: 'M', gender_preference: 'men-only' };
+    const userB = { gender: 'F', gender_preference: 'women-only' };
+    
+    expect(isGenderCompatible(userA, userB)).toBe(false);
+  });
+});
+```
+### 11.3 Integration Test Example
+```javascript
+describe('Matching Pipeline Integration', () =&gt; {
+  let db;
+  let matchingService;
+  
+  beforeAll(async () =&gt; {
+    db = await setupTestDatabase();
+    matchingService = new MatchingService(db);
+  });
+  
+  test('full matching pipeline forms groups correctly', async () =&gt; {
+    // Setup: Create 20 test users with varied preferences
+    const users = await createTestUsers(20);
+    
+    // Execute matching
+    const groups = await matchingService.runBatchMatching({
+      destination: 'Manali',
+      dateRange: { start: '2026-07-01', end: '2026-07-10' },
+      budgetTier: 'mid'
+    });
+    
+    // Verify
+    expect(groups.length).toBeGreaterThan(0);
+    
+    for (const group of groups) {
+      expect(group.members.length).toBeGreaterThanOrEqual(4);
+      expect(group.members.length).toBeLessThanOrEqual(8);
+      
+      // Verify hard constraints
+      for (const member of group.members) {
+        expect(member.destination).toBe('Manali');
+        expect(member.budget_tier).toBe('mid');
+      }
+    }
+  });
+});
+```
+### 11.4 Load Testing (k6 Script)
+```javascript
+import http from 'k6/http';
+import { check, sleep } from 'k6';
+export const options = {
+  stages: [
+    { duration: '2m', target: 100 },   // Ramp up
+    { duration: '5m', target: 100 },   // Stay at 100 users
+    { duration: '2m', target: 500 },   // Spike to 500
+    { duration: '5m', target: 500 },   // Stay at 500
+    { duration: '2m', target: 0 },     // Ramp down
+  ],
+  thresholds: {
+    http_req_duration: ['p(95)&lt;500'],
+    http_req_failed: ['rate&lt;0.01'],
+  },
+};
+export default function () {
+  const BASE_URL = __ENV.BASE_URL || 'http://localhost:8080';
+  
+  // Login
+  const loginRes = http.post(`${BASE_URL}/auth/login`, JSON.stringify({
+    email: `test${__VU}@example.com`,
+    password: 'Test123!'
+  }), { headers: { 'Content-Type': 'application/json' } });
+  
+  check(loginRes, {
+    'login successful': (r) =&gt; r.status === 200,
+  });
+  
+  const token = loginRes.json('access_token');
+  
+  // Get profile
+  const profileRes = http.get(`${BASE_URL}/users/me`, {
+    headers: { 'Authorization': `Bearer ${token}` },
+  });
+  
+  check(profileRes, {
+    'profile fetched': (r) =&gt; r.status === 200,
+  });
+  
+  // Request match
+  const matchRes = http.post(`${BASE_URL}/matches`, JSON.stringify({
+    trip_id: 'test-trip',
+    force_refresh: false
+  }), { 
+    headers: { 
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}` 
+    }
+  });
+  
+  check(matchRes, {
+    'match request accepted': (r) =&gt; r.status === 202,
+  });
+  
+  sleep(1);
+}
+```
+---
+## 12. Architecture Decision Records (ADRs)
+### ADR-001: Database Selection
+**Context:** Need a primary database that supports ACID transactions, complex queries, and JSON data.
+**Decision:** PostgreSQL 16
+**Alternatives Considered:**
+- MongoDB: Flexible schema but lacks ACID transactions for critical flows
+- CockroachDB: Distributed but operational complexity
+- MySQL: Good but less JSON support
+**Rationale:**
+- ACID compliance for bookings, payments, KYC
+- JSONB for flexible user preferences
+- Native partitioning for scalability
+- Read replicas for read scaling
+- Mature ecosystem and tooling
+**Trade-offs:**
+- More complex scaling than NoSQL (sharding) 
+- Operational overhead of replication
+### ADR-002: Event Streaming Platform
+**Context:** Need high-throughput event streaming with durable storage for audit.
+**Decision:** Apache Kafka 3.x
+**Alternatives Considered:**
+- RabbitMQ: Good for message queues, less suited for large event logs
+- AWS SQS: Serverless but limited ordering capabilities
+**Rationale:**
+- High throughput and durability
+- Exactly-once semantics (idempotent producers)
+- Partitioning for ordered events
+- Consumer group scaling
+- Schema registry for evolution
+### ADR-003: Microservices vs Monolith
+**Context:** Application with multiple bounded contexts.
+**Decision:** Microservices with event-driven communication
+**Alternatives Considered:**
+- Modular monolith: Simpler but harder to scale
+- Serverless: Not suitable for long-running matching jobs
+**Rationale:**
+- Independent scaling of matching service (computationally intensive)
+- Decoupled services for team autonomy
+- Event-driven enables async processing
+- Fault isolation
+### ADR-004: Matching Algorithm Approach
+**Context:** Need efficient group formation with hard constraints.
+**Decision:** Multi-stage filtering + Constrained Greedy with Local Swap
+**Alternatives Considered:**
+- Graph-based community detection: More complex, harder to constrain
+- ILP/MILP: Exact but NP-hard for large candidate pools
+- Genetic algorithms: Unpredictable output quality
+**Rationale:**
+- Stage 1-4 filtering reduces candidate pool to manageable size
+- Greedy ensures fast execution (&lt; 5 min for 10K users)
+- Local swap improves quality after initial greedy
+- Hard constraints enforced at filtering stage
+---
+## 13. Implementation Roadmap (Updated)
+### Phase 1: Foundation (Weeks 1-3)
+| Deliverable | Description | Owner |
+|-------------|-------------|-------|
+| AWS Infrastructure | EKS clusters, VPC, IAM, RDS, Redis, Kafka | DevOps |
+| CI/CD Pipeline | GitHub Actions, Docker builds, Helm charts | DevOps |
+| Database Schema | All DDL scripts, migrations (Flyway) | Backend |
+| Auth Service | JWT, OTP, session management | Backend |
+| User Service | Profiles, KYC flow (mocked) | Backend |
+### Phase 2: Core Matching (Weeks 4-7)
+| Deliverable | Description | Owner |
+|-------------|-------------|-------|
+| Matching Algorithm | Filtering, scoring, group formation | Backend |
+| Matching Service | REST API, gRPC, batch scheduler | Backend |
+| Group Service | Lifecycle, memberships | Backend |
+| UserCompatibility Cache | Pairwise score caching | Backend |
+| Event Bus Setup | Kafka topics, producers/consumers | Backend |
+### Phase 3: Safety &amp; Trust (Weeks 8-10)
+| Deliverable | Description | Owner |
+|-------------|-------------|-------|
+| KYC Integration | Setu/Surepass/IDfy (mocked for MVP) | Backend |
+| Ratings System | Blind ratings, trust score calculation | Backend |
+| Reports Engine | Flagging, risk scoring | Backend |
+| WebSocket Chat | Group chat (real-time) | Backend |
+| Safety Features | SOS, location sharing (basic) | Backend |
+### Phase 4: Features &amp; Polish (Weeks 10-12)
+| Deliverable | Description | Owner |
+|-------------|-------------|-------|
+| Itinerary Service | Templates, optimistic locking | Backend |
+| Guide Marketplace | Profiles, bookings | Backend |
+| Notification Service | Push, email, SMS | Backend |
+| Observability | Metrics, logs, traces, dashboards | DevOps |
+### Phase 5: Production Readiness (Week 13)
+| Deliverable | Description | Owner |
+|-------------|-------------|-------|
+| Load Testing | k6 scripts, performance validation | DevOps |
+| Security Audit | OWASP compliance, penetration test | DevOps |
+| Disaster Recovery | Backup/restore validation | DevOps |
+| Documentation | Runbooks, API docs, deployment guides | All |
+---
+## 14. References
+### Technical References
+1. PostgreSQL 16 Documentation — [postgresql.org/docs/16](https://www.postgresql.org/docs/16/)
+2. Redis 7 Documentation — [redis.io/docs](https://redis.io/docs/)
+3. Apache Kafka 3.x — [kafka.apache.org/documentation](https://kafka.apache.org/documentation/)
+4. Kubernetes 1.31 — [kubernetes.io/docs](https://kubernetes.io/docs/)
+5. Node.js 22 LTS — [nodejs.org/docs](https://nodejs.org/docs/)
+6. gRPC Documentation — [grpc.io/docs](https://grpc.io/docs/)
+7. OpenAPI 3.1 — [spec.openapis.org/oas/v3.1.0](https://spec.openapis.org/oas/v3.1.0)
+8. OAuth 2.1 — [oauth.net/2.1](https://oauth.net/2.1/)
+9. OWASP Top 10 — [owasp.org/Top10](https://owasp.org/Top10/)
+### Provider APIs
+10. Setu KYC API — [docs.setu.co](https://docs.setu.co)
+11. Surepass KYC — [surepass.io/docs](https://surepass.io/docs)
+12. IDfy KYC — [idfy.com/developers](https://idfy.com/developers)
+13. Razorpay API — [razorpay.com/docs](https://razorpay.com/docs)
+14. MapMyIndia — [mapmyindia.com/api](https://mapmyindia.com/api)
+15. Twilio SMS — [twilio.com/docs/sms](https://twilio.com/docs/sms)
+16. MSG91 SMS — [msg91.com/docs](https://msg91.com/docs)
+### Standards &amp; Best Practices
+17. SRE Book (Google) — [sre.google](https://sre.google/)
+18. Twelve-Factor App — [12factor.net](https://12factor.net/)
+19. Cloud Native Patterns — [cncf.io](https://cncf.io/)
+20. GDPR Compliance — [gdpr-info.eu](https://gdpr-info.eu/)
+21. India DPDP Act 2023 — [meity.gov.in](https://meity.gov.in/)
+---
+## 15. Document Revision History
+| Version | Date | Author | Changes |
+|---------|------|--------|---------|
+| v1.0 | June 29, 2026 | Engineering Team | Initial TRD |
+| v2.0 | June 29, 2026 | Engineering Team | Synced with PRD v2.0; added detailed algorithms, schemas, and deployment details |
+---
+**END OF TRD**
