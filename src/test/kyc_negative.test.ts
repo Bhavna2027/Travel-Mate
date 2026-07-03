@@ -1,3 +1,4 @@
+process.env.NODE_ENV = 'test';
 // KYC Negative Test Cases for Face Detection and Liveness Checks
 import app from '../index';
 import { prisma } from '../db/client';
@@ -16,6 +17,16 @@ async function runNegativeTests() {
   // Start server
   server = app.listen(TEST_PORT, () => {
     console.log(`Test server listening on port ${TEST_PORT}`);
+  });
+
+  // Cleanup any leftover user from previous failed runs for idempotency
+  await prisma.users.deleteMany({
+    where: {
+      OR: [
+        { phone: '9900000010' },
+        { email: 'negtest@mate.com' }
+      ]
+    }
   });
 
   // Register a test user

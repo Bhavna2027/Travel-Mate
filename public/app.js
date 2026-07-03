@@ -18,8 +18,14 @@ document.addEventListener('DOMContentLoaded', () => {
   } else {
     showAuth();
   }
-  loadItineraryTemplate('Manali');
-  initMatchingSimulator();
+  const itinView = document.getElementById('itinerary-view');
+  if (itinView) {
+    loadItineraryTemplate('Manali');
+  }
+  const simQuiz = document.getElementById('sim-phone-frame');
+  if (simQuiz) {
+    initMatchingSimulator();
+  }
 });
 
 // Toast Utility
@@ -72,10 +78,18 @@ function switchAuthTab(tab) {
 
 // Show/Hide Dashboard panels
 function showDashboard() {
-  document.getElementById('auth-section').classList.add('hidden');
-  document.getElementById('dashboard-section').classList.remove('hidden');
-  document.getElementById('btn-logout').classList.remove('hidden');
-  document.getElementById('header-user-name').classList.remove('hidden');
+  const authSec = document.getElementById('auth-section');
+  if (authSec) authSec.classList.add('hidden');
+
+  const dashSec = document.getElementById('dashboard-section');
+  if (dashSec) dashSec.classList.remove('hidden');
+
+  const logoutBtn = document.getElementById('btn-logout');
+  if (logoutBtn) logoutBtn.classList.remove('hidden');
+
+  const headerUser = document.getElementById('header-user-name');
+  if (headerUser) headerUser.classList.remove('hidden');
+
   fetchUserProfile();
   fetchTrips();
   fetchMarketplaceGuides();
@@ -83,10 +97,18 @@ function showDashboard() {
 }
 
 function showAuth() {
-  document.getElementById('auth-section').classList.remove('hidden');
-  document.getElementById('dashboard-section').classList.add('hidden');
-  document.getElementById('btn-logout').classList.add('hidden');
-  document.getElementById('header-user-name').classList.add('hidden');
+  const authSec = document.getElementById('auth-section');
+  if (authSec) authSec.classList.remove('hidden');
+
+  const dashSec = document.getElementById('dashboard-section');
+  if (dashSec) dashSec.classList.add('hidden');
+
+  const logoutBtn = document.getElementById('btn-logout');
+  if (logoutBtn) logoutBtn.classList.add('hidden');
+
+  const headerUser = document.getElementById('header-user-name');
+  if (headerUser) headerUser.classList.add('hidden');
+
   switchAuthTab('login');
   
   // Close WebSocket if open
@@ -243,19 +265,21 @@ async function handleLogin(e) {
 }
 
 // LOGOUT
-document.getElementById('btn-logout').addEventListener('click', async () => {
-  if (refreshToken) {
-    await fetch(`${API_BASE}/auth/logout`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh_token: refreshToken })
-    });
-  }
-  handleLocalLogout();
-  showToast('Logged out successfully.', 'info');
-});
+const logoutBtn = document.getElementById('btn-logout');
+if (logoutBtn) {
+  logoutBtn.addEventListener('click', async () => {
+    if (refreshToken) {
+      await fetch(`${API_BASE}/auth/logout`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: refreshToken })
+      });
+    }
+    handleLocalLogout();
+    showToast('Logged out successfully.', 'info');
+  });
+}
 
-// PROFILE MANAGEMENT
 async function fetchUserProfile() {
   try {
     const res = await apiFetch(`${API_BASE}/users/me`);
@@ -267,36 +291,60 @@ async function fetchUserProfile() {
     const user = await res.json();
     activeUser = user;
     
+    // Cache the user's name for layout navbar rendering
+    localStorage.setItem('tm_user_name', user.name);
+    const navUserName = document.getElementById('nav-user-name');
+    if (navUserName) navUserName.innerText = user.name;
+
+    const setTxt = (id, txt) => {
+      const el = document.getElementById(id);
+      if (el) el.innerText = txt;
+    };
+    
+    const setHtml = (id, html) => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = html;
+    };
+
+    const setVal = (id, val) => {
+      const el = document.getElementById(id);
+      if (el) el.value = val;
+    };
+
     // Fill Header
-    document.getElementById('header-user-name').innerText = `Hello, ${user.name}`;
+    setTxt('header-user-name', `Hello, ${user.name}`);
 
     // Fill Sidebar info
-    document.getElementById('prof-name').innerText = user.name;
-    document.getElementById('prof-email').innerText = user.email;
-    document.getElementById('prof-phone').innerText = user.phone;
-    document.getElementById('prof-gender').innerText = user.gender;
-    document.getElementById('prof-gender-pref').innerText = user.gender_preference || 'Mixed';
-    document.getElementById('prof-age').innerText = user.age || 'Not specified';
-    document.getElementById('prof-experience').innerText = user.travel_experience || 'beginner';
-    document.getElementById('prof-accommodation').innerText = user.preferred_accommodation || 'hostel';
-    document.getElementById('prof-bio').innerText = user.bio || 'No bio added yet. Click Edit Profile to update!';
+    setTxt('prof-name', user.name);
+    setTxt('prof-email', user.email);
+    setTxt('prof-phone', user.phone);
+    setTxt('prof-gender', user.gender);
+    setTxt('prof-gender-pref', user.gender_preference || 'Mixed');
+    setTxt('prof-age', user.age || 'Not specified');
+    setTxt('prof-experience', user.travel_experience || 'beginner');
+    setTxt('prof-accommodation', user.preferred_accommodation || 'hostel');
+    setTxt('prof-bio', user.bio || 'No bio added yet. Click Edit Profile to update!');
 
     // Verification status badge
     const statusBadge = document.getElementById('prof-status-badge');
     const kycContainer = document.getElementById('kyc-action-container');
-    if (user.verification_status === 'verified') {
-      statusBadge.className = 'badge badge-verified';
-      statusBadge.innerHTML = '<i class="fa-solid fa-square-check"></i> Verified';
-      kycContainer.classList.add('hidden'); // Hide button if already verified
-    } else {
-      statusBadge.className = 'badge badge-pending';
-      statusBadge.innerHTML = '<i class="fa-solid fa-spinner"></i> Pending OTP';
-      kycContainer.classList.remove('hidden');
+    if (statusBadge) {
+      if (user.verification_status === 'verified') {
+        statusBadge.className = 'badge badge-verified';
+        statusBadge.innerHTML = '<i class="fa-solid fa-square-check"></i> Verified';
+        if (kycContainer) kycContainer.classList.add('hidden');
+      } else {
+        statusBadge.className = 'badge badge-pending';
+        statusBadge.innerHTML = '<i class="fa-solid fa-spinner"></i> Pending OTP';
+        if (kycContainer) kycContainer.classList.remove('hidden');
+      }
     }
 
     // Trust Score Badge
     const trustBadge = document.getElementById('prof-trust-badge');
-    trustBadge.innerHTML = `<i class="fa-solid fa-shield-heart"></i> Trust: ${user.trust_score.toFixed(2)}`;
+    if (trustBadge) {
+      trustBadge.innerHTML = `<i class="fa-solid fa-shield-heart"></i> Trust: ${user.trust_score.toFixed(2)}`;
+    }
 
     // Render Multi-factor verification badges
     const verificationRow = document.getElementById('prof-verification-row');
@@ -311,39 +359,46 @@ async function fetchUserProfile() {
     }
 
     // Populate Lists (Interests, Travel Styles, Languages)
-    populateTags('prof-interests-tags', user.interests);
-    populateTags('prof-travel-styles-tags', user.travel_styles);
-    populateTags('prof-languages-tags', user.languages);
+    const interestsTags = document.getElementById('prof-interests-tags');
+    if (interestsTags) populateTags('prof-interests-tags', user.interests);
+    
+    const travelTags = document.getElementById('prof-travel-styles-tags');
+    if (travelTags) populateTags('prof-travel-styles-tags', user.travel_styles);
+    
+    const langTags = document.getElementById('prof-languages-tags');
+    if (langTags) populateTags('prof-languages-tags', user.languages);
 
     // Populate Emergency Contacts list
-    populateEmergencyContacts(user.emergency_contacts);
+    const contactsList = document.getElementById('contacts-list');
+    if (contactsList) populateEmergencyContacts(user.emergency_contacts);
 
     // Check if the user is matched in a Group (FR-07/FR-08)
+    const groupPanel = document.getElementById('active-group-panel');
     if (user.group_members && user.group_members.length > 0) {
       const match = user.group_members[0];
       if (match.status === 'accepted') {
         activeGroupId = match.group_id;
-        document.getElementById('active-group-panel').classList.remove('hidden');
+        if (groupPanel) groupPanel.classList.remove('hidden');
         fetchGroupDetails(match.group_id);
         initWebSocketChat(match.group_id);
       } else {
-        document.getElementById('active-group-panel').classList.add('hidden');
+        if (groupPanel) groupPanel.classList.add('hidden');
       }
     } else {
-      document.getElementById('active-group-panel').classList.add('hidden');
+      if (groupPanel) groupPanel.classList.add('hidden');
     }
 
     // Populate Edit modal forms
-    document.getElementById('edit-name').value = user.name;
-    document.getElementById('edit-age').value = user.age || '';
-    document.getElementById('edit-gender').value = user.gender || 'M';
-    document.getElementById('edit-gender-pref').value = user.gender_preference || 'mixed';
-    document.getElementById('edit-bio').value = user.bio || '';
-    document.getElementById('edit-experience').value = user.travel_experience || 'beginner';
-    document.getElementById('edit-accommodation').value = user.preferred_accommodation || 'hostel';
-    document.getElementById('edit-interests').value = user.interests.join(', ');
-    document.getElementById('edit-travel-styles').value = user.travel_styles.join(', ');
-    document.getElementById('edit-languages').value = user.languages.join(', ');
+    setVal('edit-name', user.name);
+    setVal('edit-age', user.age || '');
+    setVal('edit-gender', user.gender || 'M');
+    setVal('edit-gender-pref', user.gender_preference || 'mixed');
+    setVal('edit-bio', user.bio || '');
+    setVal('edit-experience', user.travel_experience || 'beginner');
+    setVal('edit-accommodation', user.preferred_accommodation || 'hostel');
+    setVal('edit-interests', user.interests.join(', '));
+    setVal('edit-travel-styles', user.travel_styles.join(', '));
+    setVal('edit-languages', user.languages.join(', '));
 
   } catch (err) {
     console.error('Fetch profile failed:', err);
@@ -614,13 +669,20 @@ async function handleDeleteProfile() {
 // TRIP MATCH REQUEST MANAGEMENT
 function toggleCreateTripForm() {
   const form = document.getElementById('form-create-trip');
+  if (!form) return;
   form.classList.toggle('hidden');
-  document.getElementById('trip-form-title').innerText = 'New Matching Request';
-  document.getElementById('trip-edit-id').value = '';
-  document.getElementById('trip-dest').value = '';
-  document.getElementById('trip-interests').value = '';
-  document.getElementById('trip-start-date').value = '';
-  document.getElementById('trip-end-date').value = '';
+  const title = document.getElementById('trip-form-title');
+  if (title) title.innerText = 'New Matching Request';
+  const editId = document.getElementById('trip-edit-id');
+  if (editId) editId.value = '';
+  const dest = document.getElementById('trip-dest');
+  if (dest) dest.value = '';
+  const interests = document.getElementById('trip-interests');
+  if (interests) interests.value = '';
+  const start = document.getElementById('trip-start-date');
+  if (start) start.value = '';
+  const end = document.getElementById('trip-end-date');
+  if (end) end.value = '';
 }
 
 async function fetchTrips() {
@@ -630,32 +692,109 @@ async function fetchTrips() {
 
     const trips = await res.json();
     const listEl = document.getElementById('trips-list');
-    listEl.innerHTML = '';
+    const activeListEl = document.getElementById('active-trips-list');
+    const upcomingListEl = document.getElementById('upcoming-trips-list');
+    const pastListEl = document.getElementById('past-trips-list');
+    const tripsEmptyEl = document.getElementById('trips-empty-state');
 
-    if (trips.length === 0) {
-      listEl.innerHTML = '<p class="empty-state">No matching travel requests created yet. Tap Create Request to find buddies!</p>';
-      return;
+    if (!listEl && !activeListEl) return;
+
+    if (listEl) {
+      listEl.innerHTML = '';
+      if (trips.length === 0) {
+        listEl.innerHTML = '<p class="empty-state">No matching travel requests created yet. Tap Create Request to find buddies!</p>';
+        return;
+      }
+
+      trips.forEach(trip => {
+        const card = document.createElement('div');
+        card.className = 'trip-card';
+        card.innerHTML = `
+          <div class="trip-info">
+            <h4>${trip.destination} <span>${trip.status}</span></h4>
+            <p><i class="fa-solid fa-calendar-days"></i> ${trip.start_date} to ${trip.end_date} | <i class="fa-solid fa-wallet"></i> Budget: ${trip.budget_tier}</p>
+            <p><i class="fa-solid fa-users"></i> Group bounds: ${trip.preferred_group_size_min}-${trip.preferred_group_size_max} buddies</p>
+            <div class="tags-list">
+              ${trip.interests.map(i => `<span class="tag">${i}</span>`).join('')}
+            </div>
+          </div>
+          <div class="trip-actions">
+            <button class="btn btn-secondary btn-sm" onclick="editTrip('${trip.trip_id}', '${trip.destination}', '${trip.start_date}', '${trip.end_date}', '${trip.budget_tier}', ${trip.preferred_group_size_min}, ${trip.preferred_group_size_max}, '${trip.interests.join(', ')}')"><i class="fa-solid fa-pen"></i></button>
+            <button class="btn btn-danger-outline btn-sm" onclick="closeTrip('${trip.trip_id}')"><i class="fa-solid fa-square-xmark"></i> Close</button>
+          </div>
+        `;
+        listEl.appendChild(card);
+      });
     }
 
-    trips.forEach(trip => {
-      const card = document.createElement('div');
-      card.className = 'trip-card';
-      card.innerHTML = `
-        <div class="trip-info">
-          <h4>${trip.destination} <span>${trip.status}</span></h4>
-          <p><i class="fa-solid fa-calendar-days"></i> ${trip.start_date} to ${trip.end_date} | <i class="fa-solid fa-wallet"></i> Budget: ${trip.budget_tier}</p>
-          <p><i class="fa-solid fa-users"></i> Group bounds: ${trip.preferred_group_size_min}-${trip.preferred_group_size_max} buddies</p>
-          <div class="tags-list">
-            ${trip.interests.map(i => `<span class="tag">${i}</span>`).join('')}
+    if (activeListEl) {
+      activeListEl.innerHTML = '';
+      if (upcomingListEl) upcomingListEl.innerHTML = '';
+      if (pastListEl) pastListEl.innerHTML = '';
+      
+      const activeTrips = trips.filter(t => t.status === 'forming');
+      const upcomingTrips = trips.filter(t => t.status === 'confirmed' || t.status === 'locked');
+      const pastTrips = trips.filter(t => t.status === 'closed');
+
+      if (trips.length === 0 && tripsEmptyEl) {
+        tripsEmptyEl.classList.remove('hidden');
+      } else if (tripsEmptyEl) {
+        tripsEmptyEl.classList.add('hidden');
+      }
+
+      const createCard = (trip) => {
+        const div = document.createElement('div');
+        div.className = 'trip-card';
+        const formattedStart = new Date(trip.start_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+        const formattedEnd = new Date(trip.end_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+        
+        let badgeClass = 'badge-forming';
+        if (trip.status === 'confirmed') badgeClass = 'badge-confirmed';
+        if (trip.status === 'locked') badgeClass = 'badge-locked';
+        
+        div.innerHTML = `
+          <div class="trip-card-header">
+            <div>
+              <h3 class="trip-destination">${trip.destination}</h3>
+              <p class="trip-dates"><i class="fa-solid fa-calendar-days"></i> ${formattedStart} - ${formattedEnd}</p>
+            </div>
+            <span class="badge ${badgeClass}">${trip.status.toUpperCase()}</span>
           </div>
-        </div>
-        <div class="trip-actions">
-          <button class="btn btn-secondary btn-sm" onclick="editTrip('${trip.trip_id}', '${trip.destination}', '${trip.start_date}', '${trip.end_date}', '${trip.budget_tier}', ${trip.preferred_group_size_min}, ${trip.preferred_group_size_max}, '${trip.interests.join(', ')}')"><i class="fa-solid fa-pen"></i></button>
-          <button class="btn btn-danger-outline btn-sm" onclick="closeTrip('${trip.trip_id}')"><i class="fa-solid fa-square-xmark"></i> Close</button>
-        </div>
-      `;
-      listEl.appendChild(card);
-    });
+          <div class="trip-details-grid" style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin:16px 0; background:rgba(45,58,140,0.03); padding:12px; border-radius:8px;">
+            <div class="trip-detail-item"><i class="fa-solid fa-wallet" style="color:var(--accent-color);"></i> Budget: ${trip.budget_tier.toUpperCase()}</div>
+            <div class="trip-detail-item"><i class="fa-solid fa-users" style="color:var(--accent-color);"></i> Size: ${trip.preferred_group_size_min}-${trip.preferred_group_size_max}</div>
+          </div>
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div class="trip-members" style="display:flex; align-items:center;">
+              <div class="trip-member-avatar" style="width:32px; height:32px; border-radius:50%; background:#2D3A8C; color:#fff; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; border:2px solid #fff;">P1</div>
+              <div class="trip-member-avatar" style="width:32px; height:32px; border-radius:50%; background:#E8613A; color:#fff; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; border:2px solid #fff; margin-left:-8px;">P2</div>
+            </div>
+            ${trip.status === 'forming' ? `
+              <button class="btn btn-secondary btn-sm" onclick="editTrip('${trip.trip_id}', '${trip.destination}', '${trip.start_date}', '${trip.end_date}', '${trip.budget_tier}', ${trip.preferred_group_size_min}, ${trip.preferred_group_size_max}, '${trip.interests.join(', ')}')"><i class="fa-solid fa-pen"></i> Edit</button>
+            ` : ''}
+          </div>
+        `;
+        return div;
+      };
+
+      activeTrips.forEach(t => activeListEl.appendChild(createCard(t)));
+      
+      if (upcomingListEl) {
+        if (upcomingTrips.length === 0) {
+          upcomingListEl.innerHTML = '<p class="text-muted text-sm" style="grid-column: span 2;">No upcoming confirmed trips.</p>';
+        } else {
+          upcomingTrips.forEach(t => upcomingListEl.appendChild(createCard(t)));
+        }
+      }
+
+      if (pastListEl) {
+        if (pastTrips.length === 0) {
+          pastListEl.innerHTML = '<p class="text-muted text-sm" style="grid-column: span 2;">No past trips recorded.</p>';
+        } else {
+          pastTrips.forEach(t => pastListEl.appendChild(createCard(t)));
+        }
+      }
+    }
   } catch (err) {
     console.error('Fetch trips failed:', err);
   }
@@ -701,16 +840,28 @@ async function handleCreateTrip(e) {
 }
 
 function editTrip(id, dest, start, end, budget, min, max, interests) {
-  document.getElementById('form-create-trip').classList.remove('hidden');
-  document.getElementById('trip-form-title').innerText = 'Edit Matching Request';
-  document.getElementById('trip-edit-id').value = id;
-  document.getElementById('trip-dest').value = dest;
-  document.getElementById('trip-start-date').value = start;
-  document.getElementById('trip-end-date').value = end;
-  document.getElementById('trip-budget').value = budget;
-  document.getElementById('trip-min-size').value = min;
-  document.getElementById('trip-max-size').value = max;
-  document.getElementById('trip-interests').value = interests;
+  const modal = document.getElementById('create-trip-modal');
+  if (modal) modal.classList.remove('hidden');
+
+  const form = document.getElementById('form-create-trip');
+  if (form) form.classList.remove('hidden');
+
+  const title = document.getElementById('trip-form-title');
+  if (title) title.innerText = 'Edit Matching Request';
+
+  const setVal = (id, val) => {
+    const el = document.getElementById(id);
+    if (el) el.value = val;
+  };
+
+  setVal('trip-edit-id', id);
+  setVal('trip-dest', dest);
+  setVal('trip-start-date', start);
+  setVal('trip-end-date', end);
+  setVal('trip-budget', budget);
+  setVal('trip-min-size', min);
+  setVal('trip-max-size', max);
+  setVal('trip-interests', interests);
 }
 
 async function closeTrip(tripId) {
@@ -1241,6 +1392,7 @@ async function fetchMarketplaceGuides() {
 
     const guides = await res.json();
     const listEl = document.getElementById('guides-marketplace-list');
+    if (!listEl) return;
     listEl.innerHTML = '';
 
     if (guides.length === 0) {
@@ -1404,39 +1556,43 @@ async function fetchAdminLogs() {
 
     // Populate Audit logs list
     const auditsEl = document.getElementById('admin-audits-list');
-    auditsEl.innerHTML = '';
-    if (data.recent_audits.length === 0) {
-      auditsEl.innerHTML = '<p class="text-muted">No audit logs written yet.</p>';
-    } else {
-      data.recent_audits.forEach(a => {
-        const div = document.createElement('div');
-        div.className = 'itinerary-item';
-        div.style.padding = '8px';
-        div.style.marginBottom = '6px';
-        div.innerHTML = `
-          <strong>[${new Date(a.created_at).toLocaleTimeString()}] ${a.action}</strong> ➜ by ${a.actor_name} on ${a.entity_type} (${a.entity_id.substring(0,8)})
-        `;
-        auditsEl.appendChild(div);
-      });
+    if (auditsEl) {
+      auditsEl.innerHTML = '';
+      if (data.recent_audits.length === 0) {
+        auditsEl.innerHTML = '<p class="text-muted">No audit logs written yet.</p>';
+      } else {
+        data.recent_audits.forEach(a => {
+          const div = document.createElement('div');
+          div.className = 'itinerary-item';
+          div.style.padding = '8px';
+          div.style.marginBottom = '6px';
+          div.innerHTML = `
+            <strong>[${new Date(a.created_at).toLocaleTimeString()}] ${a.action}</strong> ➜ by ${a.actor_name} on ${a.entity_type} (${a.entity_id.substring(0,8)})
+          `;
+          auditsEl.appendChild(div);
+        });
+      }
     }
 
     // Populate Flagged reports list
     const reportsEl = document.getElementById('admin-reports-list');
-    reportsEl.innerHTML = '';
-    if (data.flagged_reports.length === 0) {
-      reportsEl.innerHTML = '<p class="text-muted">No pending abuse reports.</p>';
-    } else {
-      data.flagged_reports.forEach(r => {
-        const div = document.createElement('div');
-        div.className = 'itinerary-item';
-        div.style.padding = '8px';
-        div.style.marginBottom = '6px';
-        div.innerHTML = `
-          <strong>Reporter: ${r.reporter_name}</strong> ➜ Reported: ${r.reported_user_name} (${r.reported_user_phone})<br/>
-          Reason: <strong class="text-red">${r.reason.toUpperCase()}</strong> • Details: ${r.description || 'none'}
-        `;
-        reportsEl.appendChild(div);
-      });
+    if (reportsEl) {
+      reportsEl.innerHTML = '';
+      if (data.flagged_reports.length === 0) {
+        reportsEl.innerHTML = '<p class="text-muted">No pending abuse reports.</p>';
+      } else {
+        data.flagged_reports.forEach(r => {
+          const div = document.createElement('div');
+          div.className = 'itinerary-item';
+          div.style.padding = '8px';
+          div.style.marginBottom = '6px';
+          div.innerHTML = `
+            <strong>Reporter: ${r.reporter_name}</strong> ➜ Reported: ${r.reported_user_name} (${r.reported_user_phone})<br/>
+            Reason: <strong class="text-red">${r.reason.toUpperCase()}</strong> • Details: ${r.description || 'none'}
+          `;
+          reportsEl.appendChild(div);
+        });
+      }
     }
 
   } catch (err) {

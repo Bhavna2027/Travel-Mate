@@ -1,11 +1,12 @@
 import { Response } from 'express';
-import { verifyAadhaarFace, checkFacePresence } from '../../services/adhar.service';
+
 import { prisma } from '../../db/client';
-import { logAction } from '../../services/audit.service';
+import { verifyAadhaarFace } from '../../services/adhar.service';
 import { sendSMS } from '../../services/sms.service';
 import * as crypto from 'crypto';
 import { AuthenticatedRequest } from '../../middleware/auth.middleware';
 import { notificationService } from '../../services/notification.service';
+import { logAction } from '../../services/audit.service';
 
 export async function getKycChallenge(req: AuthenticatedRequest, res: Response) {
   try {
@@ -58,23 +59,6 @@ export async function getKycChallenge(req: AuthenticatedRequest, res: Response) 
   }
 }
 
-// [New Endpoint] Verify face presence in a single frame
-export const checkFace = async (req: any, res: Response) => {
-  try {
-    const { frame } = req.body;
-    if (!frame) {
-      res.status(400).json({ code: 'INVALID_INPUT', message: 'Frame base64 string is required.' });
-      return;
-    }
-    
-    const faceDetected = await checkFacePresence(frame);
-    res.status(200).json({ faceDetected });
-  } catch (err) {
-    console.error('Check face error:', err);
-    res.status(500).json({ code: 'INTERNAL_ERROR', message: 'An internal error occurred.' });
-  }
-};
-
 export async function verifyLivenessOnly(req: AuthenticatedRequest, res: Response) {
   try {
     const { selfie_frames, challenge_id } = req.body;
@@ -82,6 +66,13 @@ export async function verifyLivenessOnly(req: AuthenticatedRequest, res: Respons
     if (!selfie_frames || !Array.isArray(selfie_frames) || !challenge_id) {
       res.status(400).json({ code: 'INVALID_INPUT', message: 'selfie_frames (array) and challenge_id are required.' });
       return;
+    }
+
+    for (const frame of selfie_frames) {
+      if (typeof frame !== 'string' || !frame.startsWith('data:image/') || !frame.includes(';base64,')) {
+        res.status(400).json({ code: 'INVALID_INPUT', message: 'Selfie frames must be base64 image data URIs.' });
+        return;
+      }
     }
 
     // Call the ML verification directly for just liveness (no DB update needed for login gate)
@@ -155,6 +146,12 @@ export async function verifyKyc(req: AuthenticatedRequest, res: Response) {
       if (!aadhaar_image.includes('base64')) {
         res.status(400).json({ code: 'INVALID_INPUT', message: 'Aadhaar photo must be a base64 string.' });
         return;
+      }
+      for (const frame of selfie_frames) {
+        if (typeof frame !== 'string' || !frame.startsWith('data:image/') || !frame.includes(';base64,')) {
+          res.status(400).json({ code: 'INVALID_INPUT', message: 'Selfie frames must be base64 image data URIs.' });
+          return;
+        }
       }
       // Call Aadhaar face verification service and get detection, liveness, and confidence
       const { faceDetected, livenessPassed, confidence } = await verifyAadhaarFace(req.user!.user_id, selfie_frames, challenge_id);

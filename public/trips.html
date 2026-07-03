@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Trips & Matching — TravelMate</title>
+  <!-- Google Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400..900;1,400..900&display=swap" rel="stylesheet">
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <!-- Stylesheets -->
+  <link rel="stylesheet" href="shared-style.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- Global Navbar Container -->
+  <div id="navbar-container"></div>
+<div style="position:fixed; top:1rem; right:1rem; z-index:1000;">
+  <label
+    class="cursor-pointer relative h-[3em] w-[6em] rounded-full bg-[hsl(0,0%,7%)] shadow-[0px_2px_4px_0px_rgb(18,18,18,0.25),0px_4px_8px_0px_rgb(18,18,18,0.35)]"
+  >
+    <span
+      class="absolute inset-[0.1em] rounded-full border-[1px] border-[hsl(0,0%,25%)]"
+    ></span>
+    <div
+      class="absolute left-[0.5em] top-1/2 flex h-[2em] w-[2em] -translate-y-1/2 items-center justify-center rounded-full bg-white shadow-[inset_0px_2px_2px_0px_hsl(0,0%,85%)]"
+    >
+      <div
+        class="h-[1.5em] w-[1.5em] rounded-full bg-[hsl(0,0%,7%)] shadow-[0px_2px_2px_0px_hsl(0,0%,85%)]"
+      ></div>
+    </div>
+    <div
+      class="absolute right-[0.5em] top-1/2 h-[0.25em] w-[1.5em] -translate-y-1/2 rounded-full bg-[hsl(0,0%,50%)] shadow-[inset_0px_2px_1px_0px_hsl(0,0%,40%)]"
+    ></div>
+    <input class="peer h-[1em] w-[1em] opacity-0" id="women-safety-toggle" name="women-safety-toggle" type="checkbox" />
+    <span
+      class="absolute left-[0.25em] top-1/2 flex h-[2.5em] w-[2.5em] -translate-y-1/2 items-center justify-center rounded-full bg-[rgb(26,26,26)] shadow-[inset_4px_4px_4px_0px_rgba(64,64,64,0.25),inset_-4px_-4px_4px_0px_rgba(16,16,16,0.5)] duration-300 peer-checked:left-[calc(100%-2.75em)]"
+    >
+      <span class="relative h-full w-full rounded-full">
+        <span
+          class="absolute inset-[0.1em] rounded-full border-[1px] border-[hsl(0,0%,50%)]"
+        ></span>
+      </span>
+    </span>
+  </label>
+</div>
+
+  <!-- Global Toast Alerts -->
+  <div id="toast" class="toast hidden">
+    <i id="toast-icon" class="fa-solid fa-circle-info"></i>
+    <span id="toast-message">Notification message here</span>
+  </div>
+
+  <main>
+    <!-- Page Hero -->
+    <section class="page-hero">
+      <div class="container" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:20px;">
+        <div>
+          <h1>Your Travel Matches</h1>
+          <p style="opacity:0.9; font-size:16px;">View your active match requests, formed travel groups, and past exploration history.</p>
+        </div>
+        <button class="btn btn-accent" onclick="openCreateTripModal()"><i class="fa-solid fa-plane-circle-plus"></i> Create Match Request</button>
+      </div>
+    </section>
+
+    <!-- Layout Wrapper -->
+    <div class="container trips-layout">
+      
+      <!-- Empty State Container -->
+      <div id="trips-empty-state" class="empty-state hidden">
+        <i class="fa-solid fa-earth-asia"></i>
+        <h3>No trips yet. Start your first journey!</h3>
+        <p>Create a match request for your target destination, and our matrix matching solver will find compatible travel companions.</p>
+        <button class="btn btn-primary" onclick="openCreateTripModal()"><i class="fa-solid fa-plus"></i> Create Request</button>
+      </div>
+
+      <!-- Active Trips / Forming Groups -->
+      <section>
+        <div class="section-header" style="text-align:left; margin-bottom:24px; max-width:100%;">
+          <h2 style="font-size:24px;"><i class="fa-solid fa-people-group" style="color:var(--accent-color);"></i> Active Match Groups (Forming)</h2>
+          <p style="font-size:14px; color:var(--text-secondary);">These groups are currently forming and looking for more buddies. You can edit your request until matching closes.</p>
+        </div>
+        <div class="trip-list" id="active-trips-list">
+          <!-- Dynamic rendering -->
+        </div>
+      </section>
+
+      <!-- Upcoming Trips / Confirmed Groups -->
+      <section>
+        <div class="section-header" style="text-align:left; margin-bottom:24px; max-width:100%;">
+          <h2 style="font-size:24px;"><i class="fa-solid fa-circle-check" style="color:var(--success-color);"></i> Confirmed & Locked Trips</h2>
+          <p style="font-size:14px; color:var(--text-secondary);">Matching is finalized! These trips are confirmed or locked. Prepare for your departure.</p>
+        </div>
+        <div class="trip-list" id="upcoming-trips-list">
+          <!-- Dynamic rendering -->
+        </div>
+      </section>
+
+      <!-- Past Trips -->
+      <section>
+        <div class="section-header" style="text-align:left; margin-bottom:24px; max-width:100%;">
+          <h2 style="font-size:24px;"><i class="fa-solid fa-clock-rotate-left" style="color:var(--primary-color);"></i> Travel History (Past Trips)</h2>
+          <p style="font-size:14px; color:var(--text-secondary);">Your completed travel circle logs and guide ratings.</p>
+        </div>
+        <div class="trip-list" id="past-trips-list">
+          <!-- Dynamic rendering -->
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <!-- Create Trip Request Modal overlay -->
+  <div id="create-trip-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <button class="modal-close" onclick="closeCreateTripModal()">&times;</button>
+      <h3 id="trip-form-title" style="font-size:20px; color:var(--primary-color); margin-bottom:12px; font-weight:700;"><i class="fa-solid fa-plane-circle-plus"></i> New Matching Request</h3>
+      <p style="font-size:12px; color:var(--text-secondary); margin-bottom:16px;">Specify your destination and budget. We will suggest matching companions with overlapping dates.</p>
+      
+      <form id="form-create-trip" onsubmit="handleCreateTrip(event)">
+        <!-- Hidden input for edit mode -->
+        <input type="hidden" id="trip-edit-id">
+
+        <div class="form-group">
+          <label>Target Destination</label>
+          <input type="text" id="trip-dest" required placeholder="e.g. Manali, Kerala, Leh">
+        </div>
+        
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+          <div class="form-group">
+            <label>Start Date</label>
+            <input type="date" id="trip-start-date" required>
+          </div>
+          <div class="form-group">
+            <label>End Date</label>
+            <input type="date" id="trip-end-date" required>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Budget Preference</label>
+          <select id="trip-budget" required>
+            <option value="economy" selected>Economy (Hostels, Budget Stays)</option>
+            <option value="mid-range">Mid-Range (Boutique Hotels)</option>
+            <option value="premium">Premium (Luxury Cottages)</option>
+          </select>
+        </div>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+          <div class="form-group">
+            <label>Min Buddies Needed</label>
+            <input type="number" id="trip-min-size" required min="2" max="10" value="2">
+          </div>
+          <div class="form-group">
+            <label>Max Buddies Needed</label>
+            <input type="number" id="trip-max-size" required min="2" max="10" value="5">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Travel Styles / Interests (comma separated)</label>
+          <input type="text" id="trip-interests" required placeholder="e.g. trekking, cafes, sightseeing, shopping">
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-block" style="margin-top:20px;">Submit Matching Request</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Global Footer Container -->
+  <div id="footer-container"></div>
+
+  <!-- Script bindings to toggle modal -->
+  <script>
+    function openCreateTripModal() {
+      const modal = document.getElementById('create-trip-modal');
+      if (modal) {
+        // Reset form to empty and set title
+        document.getElementById('trip-form-title').innerText = 'New Matching Request';
+        document.getElementById('trip-edit-id').value = '';
+        document.getElementById('trip-dest').value = '';
+        document.getElementById('trip-interests').value = '';
+        document.getElementById('trip-start-date').value = '';
+        document.getElementById('trip-end-date').value = '';
+        modal.classList.remove('hidden');
+      }
+    }
+    
+    function closeCreateTripModal() {
+      const modal = document.getElementById('create-trip-modal');
+      if (modal) modal.classList.add('hidden');
+    }
+  </script>
+
+  <!-- Shared & App Scripts -->
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+  <script src="app.js"></script>
+  <script src="shared.js"></script>
+</body>
+</html>

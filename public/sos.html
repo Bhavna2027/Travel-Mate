@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SOS & Safety Desk — TravelMate</title>
+  <!-- Google Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400..900;1,400..900&display=swap" rel="stylesheet">
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <!-- Stylesheets -->
+  <link rel="stylesheet" href="shared-style.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- Global Navbar Container -->
+  <div id="navbar-container"></div>
+<div style="position:fixed; top:1rem; right:1rem; z-index:1000;">
+  <label
+    class="cursor-pointer relative h-[3em] w-[6em] rounded-full bg-[hsl(0,0%,7%)] shadow-[0px_2px_4px_0px_rgb(18,18,18,0.25),0px_4px_8px_0px_rgb(18,18,18,0.35)]"
+  >
+    <span
+      class="absolute inset-[0.1em] rounded-full border-[1px] border-[hsl(0,0%,25%)]"
+    ></span>
+    <div
+      class="absolute left-[0.5em] top-1/2 flex h-[2em] w-[2em] -translate-y-1/2 items-center justify-center rounded-full bg-white shadow-[inset_0px_2px_2px_0px_hsl(0,0%,85%)]"
+    >
+      <div
+        class="h-[1.5em] w-[1.5em] rounded-full bg-[hsl(0,0%,7%)] shadow-[0px_2px_2px_0px_hsl(0,0%,85%)]"
+      ></div>
+    </div>
+    <div
+      class="absolute right-[0.5em] top-1/2 h-[0.25em] w-[1.5em] -translate-y-1/2 rounded-full bg-[hsl(0,0%,50%)] shadow-[inset_0px_2px_1px_0px_hsl(0,0%,40%)]"
+    ></div>
+    <input class="peer h-[1em] w-[1em] opacity-0" id="women-safety-toggle" name="women-safety-toggle" type="checkbox" />
+    <span
+      class="absolute left-[0.25em] top-1/2 flex h-[2.5em] w-[2.5em] -translate-y-1/2 items-center justify-center rounded-full bg-[rgb(26,26,26)] shadow-[inset_4px_4px_4px_0px_rgba(64,64,64,0.25),inset_-4px_-4px_4px_0px_rgba(16,16,16,0.5)] duration-300 peer-checked:left-[calc(100%-2.75em)]"
+    >
+      <span class="relative h-full w-full rounded-full">
+        <span
+          class="absolute inset-[0.1em] rounded-full border-[1px] border-[hsl(0,0%,50%)]"
+        ></span>
+      </span>
+    </span>
+  </label>
+</div>
+
+  <!-- Global Toast Alerts -->
+  <div id="toast" class="toast hidden">
+    <i id="toast-icon" class="fa-solid fa-circle-info"></i>
+    <span id="toast-message">Notification message here</span>
+  </div>
+
+  <main>
+    <!-- Page Hero -->
+    <section class="sos-hero">
+      <div class="container">
+        <h1>Safety & SOS Monitoring Desk</h1>
+        <p style="font-size: 16px; opacity:0.95; max-width:600px; margin:0 auto;">Immediate crisis response tools. Your safety is monitored 24/7 by our security integrations.</p>
+      </div>
+    </section>
+
+    <!-- Layout Grid -->
+    <div class="container sos-grid">
+      <!-- Left Column: SOS Button & Controls -->
+      <section class="sos-card">
+        <span style="color:var(--danger-color); font-weight:700; text-transform:uppercase; letter-spacing:1px; font-size:12px; display:block;"><i class="fa-solid fa-circle-radiation"></i> Immediate Assistance</span>
+        <h2 style="font-size:24px; margin-top:8px;">Are you in immediate danger?</h2>
+        <p style="font-size:13px; color:var(--text-secondary); margin-top:4px;">Tapping the button below will instantly dispatch alerts containing your GPS coordinates to your emergency contacts, active group members, and the local police helpline.</p>
+        
+        <div class="sos-btn-wrapper">
+          <button class="sos-btn" onclick="triggerSOSAlert()">SOS</button>
+        </div>
+
+        <p style="font-size:12px; color:var(--text-muted); font-weight:600;">Tap and confirm to trigger emergency response flow.</p>
+
+        <!-- Location Sharing Toggle -->
+        <div class="location-share-box" style="width:100%;">
+          <div style="text-align:left;">
+            <h4 style="font-size:14px; font-weight:700;"><i class="fa-solid fa-location-crosshairs" style="color:var(--success-color);"></i> Live Location Share</h4>
+            <p style="font-size:12px; color:var(--text-secondary);">Share real-time GPS coordinates with group companions</p>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="location-share-toggle" onchange="handleLocationShareToggle(this)">
+            <span class="slider"></span>
+          </label>
+        </div>
+      </section>
+
+      <!-- Right Column: Emergency Contacts Manager -->
+      <section class="sos-contacts-card">
+        <h2 style="font-size:20px; color:var(--primary-color); font-weight:700;"><i class="fa-solid fa-users-gear" style="color:var(--accent-color);"></i> Emergency Contacts</h2>
+        <p style="font-size:13px; color:var(--text-secondary); margin-bottom:16px;">Manage contacts who will be notified instantly when SOS is triggered.</p>
+        
+        <!-- Emergency Contacts List -->
+        <div id="contacts-list" class="sos-contacts-list">
+          <!-- Dynamic rendering -->
+        </div>
+
+        <button class="btn btn-secondary btn-block mt-2" onclick="toggleAddContactForm()"><i class="fa-solid fa-user-plus"></i> Add Emergency Contact</button>
+
+        <!-- Add Contact Form (hidden by default) -->
+        <form id="form-add-contact" class="hidden mt-2" onsubmit="handleAddContact(event)" style="border:1px solid rgba(45,58,140,0.1); padding:20px; border-radius:12px; background-color:rgba(45,58,140,0.01); text-align:left;">
+          <div class="form-group">
+            <label>Contact Name</label>
+            <input type="text" id="contact-name" required placeholder="Enter name">
+          </div>
+          <div class="form-group">
+            <label>Phone Number (10 digits)</label>
+            <input type="text" id="contact-phone" required pattern="^[0-9]{10}$" placeholder="10-digit mobile number">
+          </div>
+          <div class="form-group">
+            <label>Relationship</label>
+            <input type="text" id="contact-relation" required placeholder="e.g. Mother, Sister, Friend">
+          </div>
+          <div class="form-group" style="display:flex; align-items:center; gap:8px;">
+            <input type="checkbox" id="contact-primary">
+            <label for="contact-primary" style="margin-bottom:0; cursor:pointer; font-weight:600; font-size:13px;">Set as Primary Contact</label>
+          </div>
+          <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:20px;">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="toggleAddContactForm()">Cancel</button>
+            <button type="submit" class="btn btn-primary btn-sm">Add Contact</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <!-- Helpline Numbers Directory -->
+    <section class="container helplines-section">
+      <div class="section-header" style="text-align:left; margin-bottom:24px; max-width:100%;">
+        <h2 style="font-size:24px;"><i class="fa-solid fa-phone-volume" style="color:var(--accent-color);"></i> National Helpline Directory</h2>
+        <p style="font-size:14px; color:var(--text-secondary);">Direct helpline numbers for quick assistance in tourist zones.</p>
+      </div>
+
+      <div class="helplines-grid">
+        <!-- Police -->
+        <div class="helpline-card">
+          <i class="fa-solid fa-shield-halved"></i>
+          <div class="helpline-info">
+            <h3>Local Police Helpline</h3>
+            <a href="tel:100">100</a>
+          </div>
+        </div>
+        <!-- Women Helpline -->
+        <div class="helpline-card">
+          <i class="fa-solid fa-venus"></i>
+          <div class="helpline-info">
+            <h3>National Women Helpline</h3>
+            <a href="tel:1091">1091</a>
+          </div>
+        </div>
+        <!-- Tourist Helpline -->
+        <div class="helpline-card">
+          <i class="fa-solid fa-circle-info"></i>
+          <div class="helpline-info">
+            <h3>Tourist Helpline Desk</h3>
+            <a href="tel:1363">1363</a>
+          </div>
+        </div>
+      </div>
+
+      <!-- Report a User Section -->
+      <div class="abuse-report-container">
+        <p style="font-size:14px; color:var(--text-secondary); margin-bottom:12px;">Encountered suspicious, abusive, or fraudulent behavior from a matched traveler?</p>
+        <button class="btn btn-danger" onclick="triggerRiskSimulation()"><i class="fa-solid fa-triangle-exclamation"></i> File Abuse Report</button>
+      </div>
+    </section>
+
+    <!-- Safety Tips Accordion -->
+    <section class="container faq-section" style="margin-top:60px;">
+      <div class="section-header">
+        <span style="color:var(--accent-color); font-weight:700; text-transform:uppercase; letter-spacing:1px; font-size:12px; display:block; margin-bottom:8px;">Safety Circle</span>
+        <h2>Essential Safety Guidelines</h2>
+        <p>Follow these safety protocols to ensure safe and happy group travel adventures.</p>
+      </div>
+
+      <div class="faq-list">
+        <!-- Tip 1 -->
+        <div class="faq-item">
+          <div class="faq-question" onclick="toggleFaq(this)">
+            1. Verify your companion's trust badges
+            <i class="fa-solid fa-chevron-down"></i>
+          </div>
+          <div class="faq-answer">
+            Before planning a detailed trip with any member, view their profile in the app and verify their KYC and trust score badges. Avoid traveling in groups where members decline to complete verification.
+          </div>
+        </div>
+
+        <!-- Tip 2 -->
+        <div class="faq-item">
+          <div class="faq-question" onclick="toggleFaq(this)">
+            2. Activate live location sharing in remote areas
+            <i class="fa-solid fa-chevron-down"></i>
+          </div>
+          <div class="faq-answer">
+            When exploring hiking trails or new city neighborhoods, toggle "Live Location Share" on this safety page. This updates your companion group with your coordinates automatically.
+          </div>
+        </div>
+
+        <!-- Tip 3 -->
+        <div class="faq-item">
+          <div class="faq-question" onclick="toggleFaq(this)">
+            3. Meet in public tourist hubs first
+            <i class="fa-solid fa-chevron-down"></i>
+          </div>
+          <div class="faq-answer">
+            When arriving at your destination, plan your first group match meeting at a public café, bus station, or main town square. Take some time to introduce yourselves before heading to accommodations.
+          </div>
+        </div>
+
+        <!-- Tip 4 -->
+        <div class="faq-item">
+          <div class="faq-question" onclick="toggleFaq(this)">
+            4. Keep emergency contact information active
+            <i class="fa-solid fa-chevron-down"></i>
+          </div>
+          <div class="faq-answer">
+            Ensure you have added at least one primary emergency contact on this safety desk. In an emergency, our SOS alerts will reach them instantly without requiring you to dial phone numbers.
+          </div>
+        </div>
+
+        <!-- Tip 5 -->
+        <div class="faq-item">
+          <div class="faq-question" onclick="toggleFaq(this)">
+            5. Report suspicious users immediately
+            <i class="fa-solid fa-chevron-down"></i>
+          </div>
+          <div class="faq-answer">
+            If a member behaves inappropriately, violates trust boundaries, or seems fraudulent, tap "File Abuse Report." Our Moderation Risk Engine auto-bans users who cross critical warning thresholds.
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Global Footer Container -->
+  <div id="footer-container"></div>
+
+  <!-- Safety page local scripts -->
+  <script>
+    function toggleFaq(el) {
+      const item = el.parentElement;
+      item.classList.toggle('active');
+    }
+
+    let locationShareInterval = null;
+
+    async function handleLocationShareToggle(checkbox) {
+      if (checkbox.checked) {
+        showToast('Live location sharing activated. Sharing with your travel matching group.', 'success');
+        // Start sharing location every 30 seconds
+        shareLocationTick();
+        locationShareInterval = setInterval(shareLocationTick, 30000);
+      } else {
+        showToast('Live location sharing deactivated.', 'info');
+        if (locationShareInterval) {
+          clearInterval(locationShareInterval);
+          locationShareInterval = null;
+        }
+      }
+    }
+
+    async function shareLocationTick() {
+      // Mock coordinates (similar to triggerSOSAlert)
+      const lat = 32.2396;
+      const lon = 77.1887;
+      const accuracy = 5; // meters
+      
+      try {
+        const res = await apiFetch(`/safety/location-share`, {
+          method: 'POST',
+          body: JSON.stringify({
+            latitude: lat,
+            longitude: lon,
+            accuracy_meters: accuracy,
+            group_id: activeGroupId || null
+          })
+        });
+        
+        if (!res.ok) {
+          console.error('Failed to update live location.');
+        }
+      } catch (err) {
+        console.error('Network error during location share tick:', err);
+      }
+    }
+  </script>
+
+  <!-- Shared & App Scripts -->
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+  <script src="app.js"></script>
+  <script src="shared.js"></script>
+</body>
+</html>

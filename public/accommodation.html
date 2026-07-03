@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Verified Stays — TravelMate</title>
+  <!-- Google Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400..900;1,400..900&display=swap" rel="stylesheet">
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <!-- Stylesheets -->
+  <link rel="stylesheet" href="shared-style.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- Global Navbar Container -->
+  <div id="navbar-container"></div>
+<div style="position:fixed; top:1rem; right:1rem; z-index:1000;">
+  <label
+    class="cursor-pointer relative h-[3em] w-[6em] rounded-full bg-[hsl(0,0%,7%)] shadow-[0px_2px_4px_0px_rgb(18,18,18,0.25),0px_4px_8px_0px_rgb(18,18,18,0.35)]"
+  >
+    <span
+      class="absolute inset-[0.1em] rounded-full border-[1px] border-[hsl(0,0%,25%)]"
+    ></span>
+    <div
+      class="absolute left-[0.5em] top-1/2 flex h-[2em] w-[2em] -translate-y-1/2 items-center justify-center rounded-full bg-white shadow-[inset_0px_2px_2px_0px_hsl(0,0%,85%)]"
+    >
+      <div
+        class="h-[1.5em] w-[1.5em] rounded-full bg-[hsl(0,0%,7%)] shadow-[0px_2px_2px_0px_hsl(0,0%,85%)]"
+      ></div>
+    </div>
+    <div
+      class="absolute right-[0.5em] top-1/2 h-[0.25em] w-[1.5em] -translate-y-1/2 rounded-full bg-[hsl(0,0%,50%)] shadow-[inset_0px_2px_1px_0px_hsl(0,0%,40%)]"
+    ></div>
+    <input class="peer h-[1em] w-[1em] opacity-0" id="women-safety-toggle" name="women-safety-toggle" type="checkbox" />
+    <span
+      class="absolute left-[0.25em] top-1/2 flex h-[2.5em] w-[2.5em] -translate-y-1/2 items-center justify-center rounded-full bg-[rgb(26,26,26)] shadow-[inset_4px_4px_4px_0px_rgba(64,64,64,0.25),inset_-4px_-4px_4px_0px_rgba(16,16,16,0.5)] duration-300 peer-checked:left-[calc(100%-2.75em)]"
+    >
+      <span class="relative h-full w-full rounded-full">
+        <span
+          class="absolute inset-[0.1em] rounded-full border-[1px] border-[hsl(0,0%,50%)]"
+        ></span>
+      </span>
+    </span>
+  </label>
+</div>
+
+  <!-- Global Toast Alerts -->
+  <div id="toast" class="toast hidden">
+    <i id="toast-icon" class="fa-solid fa-circle-info"></i>
+    <span id="toast-message">Notification message here</span>
+  </div>
+
+  <!-- Page Hero / Search Header -->
+  <section class="page-hero">
+    <div class="container">
+      <h1>Find Vetted, Safe Accommodations</h1>
+      <p style="margin-bottom: 24px; font-size: 16px; opacity:0.9;">Every stay in our directory is verified for safety, location security, and female-traveler compatibility.</p>
+      
+      <!-- Search Form -->
+      <div class="search-bar">
+        <div class="search-field">
+          <i class="fa-solid fa-location-dot"></i>
+          <input type="text" id="search-dest" placeholder="Where are you going? (e.g. Manali)">
+        </div>
+        <div class="search-field">
+          <i class="fa-solid fa-calendar-days"></i>
+          <input type="text" id="search-dates" placeholder="Dates (e.g. Aug 1 - Aug 8)">
+        </div>
+        <div class="search-field">
+          <i class="fa-solid fa-wallet"></i>
+          <select id="search-budget">
+            <option value="" selected>Select Budget Tier</option>
+            <option value="economy">Economy (Hostels/Homestays)</option>
+            <option value="mid-range">Mid-Range (Boutique Hotels)</option>
+            <option value="premium">Premium (Luxury Resorts)</option>
+          </select>
+        </div>
+        <button class="btn btn-accent" style="padding: 12px 28px;" onclick="showToast('Searching stays...', 'info')">Search</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Layout: Sidebar + Grid -->
+  <main class="container accommodation-layout">
+    
+    <!-- Sidebar Filters -->
+    <aside class="filter-sidebar">
+      <div class="filter-group">
+        <h3>Budget Tier</h3>
+        <label class="filter-option">
+          <input type="checkbox" value="economy" checked> Economy (Under ₹1,500/night)
+        </label>
+        <label class="filter-option">
+          <input type="checkbox" value="mid" checked> Mid-Range (₹1,500 - ₹5,000)
+        </label>
+        <label class="filter-option">
+          <input type="checkbox" value="premium"> Premium (Above ₹5,000)
+        </label>
+      </div>
+
+      <div class="filter-group">
+        <h3>Stay Type</h3>
+        <label class="filter-option">
+          <input type="checkbox" checked> Hostels & Co-living
+        </label>
+        <label class="filter-option">
+          <input type="checkbox" checked> Boutique Hotels
+        </label>
+        <label class="filter-option">
+          <input type="checkbox"> Luxury Resorts
+        </label>
+        <label class="filter-option">
+          <input type="checkbox"> Eco-Camping & Glamping
+        </label>
+      </div>
+
+      <div class="filter-group">
+        <h3>Amenities</h3>
+        <label class="filter-option">
+          <input type="checkbox" checked> Women-Only Dorms
+        </label>
+        <label class="filter-option">
+          <input type="checkbox" checked> 24/7 Security Desk
+        </label>
+        <label class="filter-option">
+          <input type="checkbox" checked> CCTV in Common Areas
+        </label>
+        <label class="filter-option">
+          <input type="checkbox"> Free Breakfast
+        </label>
+        <label class="filter-option">
+          <input type="checkbox"> Coworking Space
+        </label>
+      </div>
+
+      <button class="btn btn-primary btn-block" onclick="showToast('Applying filters...', 'success')">Apply Filters</button>
+    </aside>
+
+    <!-- Grid View of Stays -->
+    <section class="acc-grid-wrapper">
+      <div class="acc-header-actions">
+        <p style="font-weight:600; color:var(--text-secondary);">Showing 6 verified properties in Manali & surrounds</p>
+        <button class="btn btn-secondary btn-sm" onclick="showToast('Map view integration coming in Phase 2.', 'info')">
+          <i class="fa-solid fa-map-location-dot"></i> Toggle Map View
+        </button>
+      </div>
+
+      <div class="acc-grid">
+        <!-- Card 1 -->
+        <article class="acc-card">
+          <div class="acc-img" style="background-image: url('https://images.unsplash.com/photo-1555854877-bab0e564b8d5?q=80&width=500&auto=format&fit=crop');">
+            <div class="acc-badges">
+              <span class="badge badge-verified"><i class="fa-solid fa-shield-check"></i> High Safety Rating</span>
+            </div>
+          </div>
+          <div class="acc-info">
+            <span style="font-size:12px; font-weight:700; color:var(--accent-color); text-transform:uppercase; margin-bottom:4px;">Co-living Hostel</span>
+            <h3>The Mountain Hive Co-Living</h3>
+            <div class="acc-rating">
+              <i class="fa-solid fa-star"></i> <span>4.9 (124 reviews)</span>
+            </div>
+            <p style="font-size:13px; color:var(--text-secondary); margin-bottom:16px;">Vetted security staff, keyless card entry, female-only dormitories, and shared coworking café.</p>
+            <div class="acc-price">
+              <span class="acc-price-tier">₹950 / night</span>
+              <button class="btn btn-primary btn-sm" onclick="openAuthModal('login')">View Spaces</button>
+            </div>
+          </div>
+        </article>
+
+        <!-- Card 2 -->
+        <article class="acc-card">
+          <div class="acc-img" style="background-image: url('https://images.unsplash.com/photo-1566073771259-6a8506099945?q=80&width=500&auto=format&fit=crop');">
+            <div class="acc-badges">
+              <span class="badge badge-verified"><i class="fa-solid fa-shield-check"></i> Verified Partner</span>
+            </div>
+          </div>
+          <div class="acc-info">
+            <span style="font-size:12px; font-weight:700; color:var(--accent-color); text-transform:uppercase; margin-bottom:4px;">Boutique Hotel</span>
+            <h3>Pinecrest Heritage Inn</h3>
+            <div class="acc-rating">
+              <i class="fa-solid fa-star"></i> <span>4.8 (89 reviews)</span>
+            </div>
+            <p style="font-size:13px; color:var(--text-secondary); margin-bottom:16px;">Located in a well-lit premium valley area. Offers private rooms, 24/7 security gates, and local transport assistance.</p>
+            <div class="acc-price">
+              <span class="acc-price-tier">₹3,200 / night</span>
+              <button class="btn btn-primary btn-sm" onclick="openAuthModal('login')">View Spaces</button>
+            </div>
+          </div>
+        </article>
+
+        <!-- Card 3 -->
+        <article class="acc-card">
+          <div class="acc-img" style="background-image: url('https://images.unsplash.com/photo-1618773928121-c32242e63f39?q=80&width=500&auto=format&fit=crop');">
+            <div class="acc-badges">
+              <span class="badge badge-verified"><i class="fa-solid fa-shield-check"></i> High Safety Rating</span>
+            </div>
+          </div>
+          <div class="acc-info">
+            <span style="font-size:12px; font-weight:700; color:var(--accent-color); text-transform:uppercase; margin-bottom:4px;">Resort Stay</span>
+            <h3>Himalayan Ridge Retreat</h3>
+            <div class="acc-rating">
+              <i class="fa-solid fa-star"></i> <span>4.9 (45 reviews)</span>
+            </div>
+            <p style="font-size:13px; color:var(--text-secondary); margin-bottom:16px;">Premium cottage resort. Private courtyard, secure shuttle services, and fully gated property with emergency alerts.</p>
+            <div class="acc-price">
+              <span class="acc-price-tier">₹5,500 / night</span>
+              <button class="btn btn-primary btn-sm" onclick="openAuthModal('login')">View Spaces</button>
+            </div>
+          </div>
+        </article>
+
+        <!-- Card 4 -->
+        <article class="acc-card">
+          <div class="acc-img" style="background-image: url('https://images.unsplash.com/photo-1504280390367-361c6d9f38f4?q=80&width=500&auto=format&fit=crop');">
+            <div class="acc-badges">
+              <span class="badge badge-verified"><i class="fa-solid fa-shield-check"></i> Glamping Vetted</span>
+            </div>
+          </div>
+          <div class="acc-info">
+            <span style="font-size:12px; font-weight:700; color:var(--accent-color); text-transform:uppercase; margin-bottom:4px;">Glamping Site</span>
+            <h3>Solang Valley Eco-Glamp</h3>
+            <div class="acc-rating">
+              <i class="fa-solid fa-star"></i> <span>4.7 (72 reviews)</span>
+            </div>
+            <p style="font-size:13px; color:var(--text-secondary); margin-bottom:16px;">High-end secure glamping dome tents. Round-the-clock guards, guided group trekking guides, and campfires.</p>
+            <div class="acc-price">
+              <span class="acc-price-tier">₹2,800 / night</span>
+              <button class="btn btn-primary btn-sm" onclick="openAuthModal('login')">View Spaces</button>
+            </div>
+          </div>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <!-- Global Footer Container -->
+  <div id="footer-container"></div>
+
+  <!-- Shared & App Scripts -->
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+  <script src="app.js"></script>
+  <script src="shared.js"></script>
+</body>
+</html>

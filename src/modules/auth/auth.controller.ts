@@ -204,6 +204,7 @@ export async function verifyOtp(req: Request, res: Response) {
 }
 
 export async function login(req: Request, res: Response) {
+  console.log('[DEBUG LOGIN] Received login request with body:', req.body);
   try {
     const { email, password } = req.body;
 
@@ -213,6 +214,7 @@ export async function login(req: Request, res: Response) {
     }
 
     const user = await prisma.users.findUnique({ where: { email } });
+  console.log('[DEBUG LOGIN] User fetched:', user);
     if (!user || user.deleted_at) {
       res.status(401).json({ code: 'UNAUTHORIZED', message: 'Invalid credentials.' });
       return;

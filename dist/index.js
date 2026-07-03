@@ -54,7 +54,7 @@ const safetyController = __importStar(require("./modules/safety/safety.controlle
 const tripDetailsController = __importStar(require("./modules/trips/trip-details.controller"));
 const guidesController = __importStar(require("./modules/guides/guides.controller"));
 const adminController = __importStar(require("./modules/admin/admin.controller"));
-const adhar_service_1 = require("./services/adhar.service");
+// loadModels removed - client-side handling
 const client_1 = require("./db/client");
 const chat_server_1 = require("./services/chat.server");
 dotenv.config();
@@ -144,7 +144,7 @@ const startServer = async () => {
             });
             console.log('-----------------------------\n');
             // Pre-load ML models during boot so first verification doesn't lag
-            await (0, adhar_service_1.loadModels)();
+            // loadModels call removed - client handles model loading
         });
     }
     catch (err) {

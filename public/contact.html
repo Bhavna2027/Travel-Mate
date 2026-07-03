@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Contact & Help — TravelMate</title>
+  <!-- Google Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400..900;1,400..900&display=swap" rel="stylesheet">
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <!-- Stylesheets -->
+  <link rel="stylesheet" href="shared-style.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- Global Navbar Container -->
+  <div id="navbar-container"></div>
+<div style="position:fixed; top:1rem; right:1rem; z-index:1000;">
+  <label
+    class="cursor-pointer relative h-[3em] w-[6em] rounded-full bg-[hsl(0,0%,7%)] shadow-[0px_2px_4px_0px_rgb(18,18,18,0.25),0px_4px_8px_0px_rgb(18,18,18,0.35)]"
+  >
+    <span
+      class="absolute inset-[0.1em] rounded-full border-[1px] border-[hsl(0,0%,25%)]"
+    ></span>
+    <div
+      class="absolute left-[0.5em] top-1/2 flex h-[2em] w-[2em] -translate-y-1/2 items-center justify-center rounded-full bg-white shadow-[inset_0px_2px_2px_0px_hsl(0,0%,85%)]"
+    >
+      <div
+        class="h-[1.5em] w-[1.5em] rounded-full bg-[hsl(0,0%,7%)] shadow-[0px_2px_2px_0px_hsl(0,0%,85%)]"
+      ></div>
+    </div>
+    <div
+      class="absolute right-[0.5em] top-1/2 h-[0.25em] w-[1.5em] -translate-y-1/2 rounded-full bg-[hsl(0,0%,50%)] shadow-[inset_0px_2px_1px_0px_hsl(0,0%,40%)]"
+    ></div>
+    <input class="peer h-[1em] w-[1em] opacity-0" id="women-safety-toggle" name="women-safety-toggle" type="checkbox" />
+    <span
+      class="absolute left-[0.25em] top-1/2 flex h-[2.5em] w-[2.5em] -translate-y-1/2 items-center justify-center rounded-full bg-[rgb(26,26,26)] shadow-[inset_4px_4px_4px_0px_rgba(64,64,64,0.25),inset_-4px_-4px_4px_0px_rgba(16,16,16,0.5)] duration-300 peer-checked:left-[calc(100%-2.75em)]"
+    >
+      <span class="relative h-full w-full rounded-full">
+        <span
+          class="absolute inset-[0.1em] rounded-full border-[1px] border-[hsl(0,0%,50%)]"
+        ></span>
+      </span>
+    </span>
+  </label>
+</div>
+
+  <!-- Global Toast Alerts -->
+  <div id="toast" class="toast hidden">
+    <i id="toast-icon" class="fa-solid fa-circle-info"></i>
+    <span id="toast-message">Notification message here</span>
+  </div>
+
+  <main>
+    <!-- Page Hero -->
+    <section class="page-hero" style="text-align: center;">
+      <div class="container">
+        <h1>We Are Here to Support You</h1>
+        <p style="opacity:0.9; font-size:16px; max-width:600px; margin:0 auto;">Have a safety concern, a bug report, or want to partner with us? Drop us a message, and our support circle will respond promptly.</p>
+      </div>
+    </section>
+
+    <!-- Support and Contact Grid -->
+    <div class="container contact-grid">
+      <!-- Sidebar Info -->
+      <aside class="support-card">
+        <h2 style="font-size:22px; margin-bottom:16px;">Direct Support</h2>
+        <p style="font-size:14px; color:var(--text-secondary); margin-bottom:24px;">Our support and safety monitoring desk operates 24/7. Your peace of mind is our priority.</p>
+        
+        <div style="display:flex; flex-direction:column; gap:16px; font-size:14px;">
+          <div><i class="fa-solid fa-envelope" style="color:var(--accent-color); width:20px;"></i> Email: <strong>support@travelmate.in</strong></div>
+          <div><i class="fa-solid fa-clock" style="color:var(--accent-color); width:20px;"></i> Response Time: <strong>Under 2 Hours</strong></div>
+          <div><i class="fa-solid fa-shield-halved" style="color:var(--accent-color); width:20px;"></i> Emergency HELPLINE: <strong>Active 24/7</strong></div>
+        </div>
+
+        <div class="support-hours">
+          <h4 style="font-size:14px; margin-top:20px; font-weight:700; color:var(--primary-color);">Support Hours</h4>
+          <div><span>General Queries</span> <span>Mon-Sun (9AM - 8PM)</span></div>
+          <div><span>Safety & SOS Desk</span> <span>24 Hours / 7 Days</span></div>
+          <div><span>Partnerships</span> <span>Mon-Fri (10AM - 6PM)</span></div>
+        </div>
+      </aside>
+
+      <!-- Contact Form -->
+      <section class="contact-form-card">
+        <h2 style="font-size:24px; margin-bottom:8px;">Send a Message</h2>
+        <p style="font-size:13px; color:var(--text-secondary); margin-bottom:28px;">Fill in the form, and we will get back to you immediately.</p>
+        
+        <form id="contact-form" onsubmit="event.preventDefault(); showToast('Thank you! Your message has been received.', 'success'); document.getElementById('contact-form').reset();">
+          <div class="form-group">
+            <label>Full Name</label>
+            <input type="text" placeholder="Enter your name" required>
+          </div>
+          
+          <div class="form-group">
+            <label>Email Address</label>
+            <input type="email" placeholder="name@domain.com" required>
+          </div>
+
+          <div class="form-group">
+            <label>Subject</label>
+            <select required>
+              <option value="" disabled selected>Select a subject</option>
+              <option value="general">General Inquiry</option>
+              <option value="safety">Safety / Abuse Concern</option>
+              <option value="partnership">Partnership Request</option>
+              <option value="bug">Bug Report / Technical Issue</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label>Message</label>
+            <textarea rows="5" placeholder="Type your message details here..." required></textarea>
+          </div>
+
+          <button type="submit" class="btn btn-primary btn-block">Submit Message <i class="fa-solid fa-paper-plane"></i></button>
+        </form>
+      </section>
+    </div>
+
+    <!-- FAQ Accordion -->
+    <section class="container faq-section" id="faq">
+      <div class="section-header">
+        <span style="color:var(--accent-color); font-weight:700; text-transform:uppercase; letter-spacing:1px; font-size:12px; display:block; margin-bottom:8px;">Help Desk</span>
+        <h2>Frequently Asked Questions</h2>
+        <p>Real answers to questions about safety verification, companion matching, and platform logistics.</p>
+      </div>
+
+      <div class="faq-list">
+        <!-- FAQ 1 -->
+        <div class="faq-item">
+          <div class="faq-question" onclick="toggleFaq(this)">
+            How does TravelMate ensure traveler safety?
+            <i class="fa-solid fa-chevron-down"></i>
+          </div>
+          <div class="faq-answer">
+            Every user who wants to request matches or message group members must verify their identity. We use secure integrations to verify Aadhaar cards and run an instant browser-side face liveness check. This ensures all travelers are real, verified individuals before they join any circle.
+          </div>
+        </div>
+
+        <!-- FAQ 2 -->
+        <div class="faq-item">
+          <div class="faq-question" onclick="toggleFaq(this)">
+            What happens if I trigger an SOS alert?
+            <i class="fa-solid fa-chevron-down"></i>
+          </div>
+          <div class="faq-answer">
+            Triggering the SOS button instantly dispatches a safety alert containing your exact GPS coordinates to your saved emergency contacts. Simultaneously, our backend notifies active emergency helplines and alerts other members in your matching travel group, keeping everyone in the loop during a safety concern.
+          </div>
+        </div>
+
+        <!-- FAQ 3 -->
+        <div class="faq-item">
+          <div class="faq-question" onclick="toggleFaq(this)">
+            How is compatibility calculated for group matches?
+            <i class="fa-solid fa-chevron-down"></i>
+          </div>
+          <div class="faq-answer">
+            We cluster open matching requests based on destination, overlapping travel dates, budget tiers (economy/mid/premium), and interests (e.g. trekking, food tours, leisure). Our database matches you with travelers who fit your preferences so there are no surprises.
+          </div>
+        </div>
+
+        <!-- FAQ 4 -->
+        <div class="faq-item">
+          <div class="faq-question" onclick="toggleFaq(this)">
+            Do you verify accommodation stays?
+            <i class="fa-solid fa-chevron-down"></i>
+          </div>
+          <div class="faq-answer">
+            Yes. Stays listed in our Accommodations tab are vetted based on physical security audits, safety history, 24/7 front desk availability, security presence, and user reviews from female travelers.
+          </div>
+        </div>
+
+        <!-- FAQ 5 -->
+        <div class="faq-item">
+          <div class="faq-question" onclick="toggleFaq(this)">
+            How are expense splits and guides managed?
+            <i class="fa-solid fa-chevron-down"></i>
+          </div>
+          <div class="faq-answer">
+            Once matches are locked, members share a cooperative group interface. You can log trip expenses on a shared ledger which automatically calculates optimal debt transfers. You can also book vetted local tour guides in safety-reviewed tourist zones directly.
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Global Footer Container -->
+  <div id="footer-container"></div>
+
+  <!-- FAQ Toggle Script -->
+  <script>
+    function toggleFaq(el) {
+      const item = el.parentElement;
+      item.classList.toggle('active');
+    }
+  </script>
+
+  <!-- Shared & App Scripts -->
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+  <script src="app.js"></script>
+  <script src="shared.js"></script>
+</body>
+</html>

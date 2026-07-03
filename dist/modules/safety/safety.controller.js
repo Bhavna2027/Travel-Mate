@@ -117,6 +117,12 @@ async function verifyLivenessOnly(req, res) {
             res.status(400).json({ code: 'INVALID_INPUT', message: 'selfie_frames (array) and challenge_id are required.' });
             return;
         }
+        for (const frame of selfie_frames) {
+            if (typeof frame !== 'string' || !frame.startsWith('data:image/') || !frame.includes(';base64,')) {
+                res.status(400).json({ code: 'INVALID_INPUT', message: 'Selfie frames must be base64 image data URIs.' });
+                return;
+            }
+        }
         // Call the ML verification directly for just liveness (no DB update needed for login gate)
         // We pass req.user!.user_id because we need to verify the challenge_id for this user.
         const { faceDetected, livenessPassed, confidence } = await (0, adhar_service_1.verifyAadhaarFace)(req.user.user_id, selfie_frames, challenge_id);
@@ -179,6 +185,12 @@ async function verifyKyc(req, res) {
             if (!aadhaar_image.includes('base64')) {
                 res.status(400).json({ code: 'INVALID_INPUT', message: 'Aadhaar photo must be a base64 string.' });
                 return;
+            }
+            for (const frame of selfie_frames) {
+                if (typeof frame !== 'string' || !frame.startsWith('data:image/') || !frame.includes(';base64,')) {
+                    res.status(400).json({ code: 'INVALID_INPUT', message: 'Selfie frames must be base64 image data URIs.' });
+                    return;
+                }
             }
             // Call Aadhaar face verification service and get detection, liveness, and confidence
             const { faceDetected, livenessPassed, confidence } = await (0, adhar_service_1.verifyAadhaarFace)(req.user.user_id, selfie_frames, challenge_id);

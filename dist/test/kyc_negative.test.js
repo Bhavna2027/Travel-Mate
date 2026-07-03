@@ -3,6 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+process.env.NODE_ENV = 'test';
 // KYC Negative Test Cases for Face Detection and Liveness Checks
 const index_1 = __importDefault(require("../index"));
 const client_1 = require("../db/client");
@@ -16,6 +17,15 @@ async function runNegativeTests() {
     // Start server
     server = index_1.default.listen(TEST_PORT, () => {
         console.log(`Test server listening on port ${TEST_PORT}`);
+    });
+    // Cleanup any leftover user from previous failed runs for idempotency
+    await client_1.prisma.users.deleteMany({
+        where: {
+            OR: [
+                { phone: '9900000010' },
+                { email: 'negtest@mate.com' }
+            ]
+        }
     });
     // Register a test user
     const regRes = await fetch(`${baseUrl}/auth/register`, {

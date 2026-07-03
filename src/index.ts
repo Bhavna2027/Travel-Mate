@@ -11,19 +11,19 @@ import { parseToken, requireAuth } from './middleware/auth.middleware';
 import * as authController from './modules/auth/auth.controller';
 import * as userController from './modules/users/users.controller';
 import * as tripController from './modules/trips/trips.controller';
-import * as matchingController from './modules/matching/matching.controller';
+// import * as matchingController from './modules/matching/matching.controller';
 import * as safetyController from './modules/safety/safety.controller';
 import * as tripDetailsController from './modules/trips/trip-details.controller';
 import * as guidesController from './modules/guides/guides.controller';
 import * as adminController from './modules/admin/admin.controller';
-import { loadModels } from './services/adhar.service';
+// loadModels removed - client-side handling
 import { prisma } from './db/client';
 import { initChatServer } from './services/chat.server';
 
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 8080;
+const PORT = process.env.PORT || 8081;
 
 // Create HTTP server to mount WebSockets
 const server = createServer(app);
@@ -59,11 +59,11 @@ app.post('/trips/:trip_id/close', requireAuth, tripController.closeTrip);
 app.post('/trips/send-reminders', requireAuth, tripController.sendTripReminders);
 
 // Matching Routes
-app.post('/matching/run', requireAuth, matchingController.runMatching);
+// app.post('/matching/run', requireAuth, matchingController.runMatching);
 
 // Safety Routes
 app.get('/safety/verify-kyc/challenge', requireAuth, safetyController.getKycChallenge);
-app.post('/safety/check-face', requireAuth, safetyController.checkFace);
+
 app.post('/safety/verify-liveness-only', requireAuth, safetyController.verifyLivenessOnly);
 app.post('/safety/verify-kyc', requireAuth, safetyController.verifyKyc);
 app.post('/safety/verify-kyc/aadhaar-otp', requireAuth, safetyController.requestAadhaarOtp);
@@ -125,7 +125,7 @@ const startServer = async () => {
       console.log('-----------------------------\n');
       
       // Pre-load ML models during boot so first verification doesn't lag
-      await loadModels();
+      // loadModels call removed - client handles model loading
     });
   } catch (err) {
     console.error('Failed to start server:', err);
